@@ -1,15 +1,23 @@
 package entities;
 
+import engine.Animation;
+import engine.AssetManager;
 import input.InputManager;
 import physics.AABB;
 
 import java.awt.Color;
 import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
+import java.util.EnumMap;
+import java.util.Map;
 
 public final class Player extends Entity {
     private static final int DEFAULT_MAX_HEALTH = 3;
     private static final int DEFAULT_MAX_MANA = 100;
     private static final int MAGIC_COST = 25;
+    private static final int MAX_POTIONS_PER_TYPE = 5;
+    private static final int HEALTH_POTION_RESTORE = 2;
+    private static final int MANA_POTION_RESTORE = 50;
     private static final double MOVE_SPEED = 260.0;
     private static final double DASH_SPEED = 840.0;
     private static final double DASH_DURATION = 0.25;
@@ -17,19 +25,27 @@ public final class Player extends Entity {
     private static final double ATTACK_DURATION = 0.20;
     private static final double ATTACK_COOLDOWN = 0.30;
     private static final double MAGIC_COOLDOWN = 0.35;
-    private static final double ATTACK_WIDTH = 42.0;
-    private static final double ATTACK_HEIGHT = 26.0;
+    private static final double HORIZONTAL_ATTACK_WIDTH = 42.0;
+    private static final double HORIZONTAL_ATTACK_HEIGHT = 26.0;
+    private static final double VERTICAL_ATTACK_WIDTH = 26.0;
+    private static final double VERTICAL_ATTACK_HEIGHT = 42.0;
     private static final double GROUND_ACCELERATION = 2000.0;
     private static final double AIR_ACCELERATION = 1200.0;
     private static final double DRAG = 2400.0;
     private static final double GRAVITY = 1400.0;
     private static final double JUMP_SPEED = 620.0;
+    private static final double ENEMY_BOUNCE_SPEED = 560.0;
+    private static final double KNOCKBACK_SPEED = 360.0;
+    private static final double KNOCKBACK_LIFT_SPEED = 260.0;
     private static final double RUNNING_THRESHOLD = 8.0;
     private static final double INVULNERABILITY_DURATION = 1.5;
     private static final double BLINK_FREQUENCY = 12.0;
+    private static final int MAX_AIR_JUMPS = 1;
+    private static final String PLAYER_SPRITE_DIRECTORY = "sprites/player/";
 
     private final int maxHealth;
     private final int maxMana;
+    private final Map<PlayerState, Animation> animations;
     private PlayerState state = PlayerState.IDLE;
     private int currentHealth;
     private int currentMana;
@@ -43,9 +59,18 @@ public final class Player extends Entity {
     private double invulnerabilityTimer;
     private int facingDirection = 1;
     private int dashDirection = 1;
+    private AttackDirection aimDirection = AttackDirection.RIGHT;
+    private AttackDirection attackDirection = AttackDirection.RIGHT;
+    private int availableAirJumps = MAX_AIR_JUMPS;
+    private int healthPotionCount;
+    private int manaPotionCount;
+    private int collectibleCount;
     private boolean wasAttackPressed;
     private boolean wasDashPressed;
     private boolean wasMagicPressed;
+    private boolean wasJumpPressed;
+    private boolean wasHealthPotionPressed;
+    private boolean wasManaPotionPressed;
     private boolean jumpSoundRequested;
     private boolean damageSoundRequested;
     private MagicProjectile pendingMagicProjectile;
@@ -56,6 +81,7 @@ public final class Player extends Entity {
         this.currentHealth = maxHealth;
         this.maxMana = DEFAULT_MAX_MANA;
         this.currentMana = maxMana;
+        this.animations = createAnimations(width, height);
         this.spawnX = x;
         this.spawnY = y;
         setOnGround(true);
@@ -71,6 +97,7 @@ public final class Player extends Entity {
         updateAttackCooldown(deltaSeconds);
         updateMagicCooldown(deltaSeconds);
         updateDashCooldown(deltaSeconds);
+        handlePotionTriggers(inputManager);
         handleAttackTrigger(inputManager);
         handleMagicTrigger(inputManager);
         handleDashTrigger(inputManager);
@@ -99,6 +126,10 @@ public final class Player extends Entity {
         wasAttackPressed = inputManager.isAttackPressed();
         wasDashPressed = inputManager.isDodging();
         wasMagicPressed = inputManager.isMagicPressed();
+        wasJumpPressed = inputManager.isJumpPressed();
+        wasHealthPotionPressed = inputManager.isUseHealthPotionPressed();
+        wasManaPotionPressed = inputManager.isUseManaPotionPressed();
+        getCurrentAnimation().update();
     }
 
     public void refreshState() {
@@ -107,11 +138,11 @@ public final class Player extends Entity {
         }
 
         if (!isOnGround()) {
-            state = getVelocityY() < 0.0 ? PlayerState.JUMPING : PlayerState.FALLING;
+            setState(getVelocityY() < 0.0 ? PlayerState.JUMPING : PlayerState.FALLING);
             return;
         }
 
-        state = Math.abs(getVelocityX()) > RUNNING_THRESHOLD ? PlayerState.RUNNING : PlayerState.IDLE;
+        setState(Math.abs(getVelocityX()) > RUNNING_THRESHOLD ? PlayerState.RUNNING : PlayerState.IDLE);
     }
 
     public PlayerState getState() {
@@ -144,6 +175,96 @@ public final class Player extends Entity {
         return restoredAmount;
     }
 
+    public int restoreHealth(int amount) {
+        if (amount <= 0 || currentHealth == maxHealth || isDead()) {
+            return 0;
+        }
+
+        int restoredAmount = Math.min(amount, maxHealth - currentHealth);
+        currentHealth += restoredAmount;
+        return restoredAmount;
+    }
+
+    public boolean addHealthPotion() {
+        if (healthPotionCount == MAX_POTIONS_PER_TYPE) {
+            return false;
+        }
+
+        healthPotionCount++;
+        return true;
+    }
+
+    public boolean addManaPotion() {
+        if (manaPotionCount == MAX_POTIONS_PER_TYPE) {
+            return false;
+        }
+
+        manaPotionCount++;
+        return true;
+    }
+
+    public boolean useHealthPotion() {
+        if (healthPotionCount == 0 || restoreHealth(HEALTH_POTION_RESTORE) == 0) {
+            return false;
+        }
+
+        healthPotionCount--;
+        return true;
+    }
+
+    public boolean useManaPotion() {
+        if (manaPotionCount == 0 || restoreMana(MANA_POTION_RESTORE) == 0) {
+            return false;
+        }
+
+        manaPotionCount--;
+        return true;
+    }
+
+    public void addCollectible() {
+        collectibleCount++;
+    }
+
+    public int getHealthPotionCount() {
+        return healthPotionCount;
+    }
+
+    public int getManaPotionCount() {
+        return manaPotionCount;
+    }
+
+    public int getCollectibleCount() {
+        return collectibleCount;
+    }
+
+    public int getAvailableAirJumps() {
+        return availableAirJumps;
+    }
+
+    public void resetJourneyInventory() {
+        healthPotionCount = 0;
+        manaPotionCount = 0;
+        collectibleCount = 0;
+    }
+
+    public void updateAttackAim(double worldX, double worldY) {
+        double playerCenterX = getX() + getWidth() * 0.5;
+        double playerCenterY = getY() + getHeight() * 0.5;
+        double distanceX = worldX - playerCenterX;
+        double distanceY = worldY - playerCenterY;
+        if (Math.abs(distanceX) >= Math.abs(distanceY)) {
+            aimDirection = distanceX >= 0.0 ? AttackDirection.RIGHT : AttackDirection.LEFT;
+            facingDirection = aimDirection == AttackDirection.RIGHT ? 1 : -1;
+            return;
+        }
+
+        aimDirection = distanceY >= 0.0 ? AttackDirection.DOWN : AttackDirection.UP;
+    }
+
+    public AttackDirection getAttackDirection() {
+        return attackDirection;
+    }
+
     public MagicProjectile consumePendingMagicProjectile() {
         MagicProjectile projectile = pendingMagicProjectile;
         pendingMagicProjectile = null;
@@ -155,11 +276,15 @@ public final class Player extends Entity {
     }
 
     public boolean isInvulnerable() {
-        return invulnerabilityTimer > 0.0;
+        return invulnerabilityTimer > 0.0 || state == PlayerState.DODGING;
     }
 
     public boolean isDead() {
         return currentHealth == 0;
+    }
+
+    public boolean isDodging() {
+        return state == PlayerState.DODGING;
     }
 
     public boolean consumeJumpSoundRequest() {
@@ -184,7 +309,7 @@ public final class Player extends Entity {
 
     public void takeDamage(int amount) {
         // I-frames impedem dano em cascata enquanto o temporizador estiver ativo.
-        if (amount <= 0 || currentHealth <= 0 || invulnerabilityTimer > 0.0) {
+        if (amount <= 0 || currentHealth <= 0 || isInvulnerable()) {
             return;
         }
 
@@ -217,10 +342,15 @@ public final class Player extends Entity {
         magicCooldownTimer = 0.0;
         dashCooldownTimer = 0.0;
         invulnerabilityTimer = INVULNERABILITY_DURATION;
+        resetAnimations();
         state = PlayerState.IDLE;
         wasAttackPressed = false;
         wasDashPressed = false;
         wasMagicPressed = false;
+        wasJumpPressed = false;
+        wasHealthPotionPressed = false;
+        wasManaPotionPressed = false;
+        availableAirJumps = MAX_AIR_JUMPS;
         jumpSoundRequested = false;
         damageSoundRequested = false;
         pendingMagicProjectile = null;
@@ -230,6 +360,51 @@ public final class Player extends Entity {
         spawnX = startX;
         spawnY = startY;
         respawn();
+    }
+
+    public void bounceFromEnemy() {
+        if (isDead()) {
+            return;
+        }
+
+        attackTimer = 0.0;
+        dashTimer = 0.0;
+        setVelocityY(-ENEMY_BOUNCE_SPEED);
+        setOnGround(false);
+        availableAirJumps = MAX_AIR_JUMPS;
+        setState(PlayerState.JUMPING);
+    }
+
+    public void applyKnockbackFrom(double sourceX) {
+        if (isDead()) {
+            return;
+        }
+
+        double playerCenterX = getX() + getWidth() * 0.5;
+        int direction = playerCenterX >= sourceX ? 1 : -1;
+        setVelocityX(direction * KNOCKBACK_SPEED);
+        setVelocityY(-KNOCKBACK_LIFT_SPEED);
+        setOnGround(false);
+        if (state != PlayerState.DODGING) {
+            setState(PlayerState.FALLING);
+        }
+    }
+
+    public void fixedUpdateCinematic(double deltaSeconds, double horizontalVelocity) {
+        if (isDead()) {
+            return;
+        }
+        if (deltaSeconds < 0.0) {
+            throw new IllegalArgumentException("deltaSeconds must not be negative.");
+        }
+
+        beginFixedUpdate();
+        updateInvulnerability(deltaSeconds);
+        setVelocityX(horizontalVelocity);
+        setVelocityY(getVelocityY() + GRAVITY * deltaSeconds);
+        integrate(deltaSeconds);
+        setState(Math.abs(horizontalVelocity) > RUNNING_THRESHOLD ? PlayerState.RUNNING : PlayerState.FALLING);
+        getCurrentAnimation().update();
     }
 
     @Override
@@ -242,17 +417,12 @@ public final class Player extends Entity {
             return;
         }
 
+        BufferedImage currentFrame = getCurrentAnimation().getCurrentFrame();
         int renderX = (int) Math.round(getRenderX(alpha));
         int renderY = (int) Math.round(getRenderY(alpha));
         int renderWidth = (int) Math.round(getWidth());
         int renderHeight = (int) Math.round(getHeight());
-
-        g2d.setColor(new Color(241, 162, 205));
-        g2d.fillRoundRect(renderX, renderY, renderWidth, renderHeight, 16, 16);
-
-        g2d.setColor(new Color(62, 49, 80));
-        g2d.fillRect(renderX + 8, renderY + 14, 8, 8);
-        g2d.fillRect(renderX + renderWidth - 16, renderY + 14, 8, 8);
+        g2d.drawImage(currentFrame, renderX, renderY, renderWidth, renderHeight, null);
     }
 
     private void updateInvulnerability(double deltaSeconds) {
@@ -282,6 +452,18 @@ public final class Player extends Entity {
         startAttack();
     }
 
+    private void handlePotionTriggers(InputManager inputManager) {
+        boolean healthPotionPressed = inputManager.isUseHealthPotionPressed();
+        if (healthPotionPressed && !wasHealthPotionPressed) {
+            useHealthPotion();
+        }
+
+        boolean manaPotionPressed = inputManager.isUseManaPotionPressed();
+        if (manaPotionPressed && !wasManaPotionPressed) {
+            useManaPotion();
+        }
+    }
+
     private void handleDashTrigger(InputManager inputManager) {
         boolean dashPressed = inputManager.isDodging();
         if (!dashPressed || wasDashPressed || state == PlayerState.DODGING
@@ -306,7 +488,8 @@ public final class Player extends Entity {
     private void startAttack() {
         attackTimer = ATTACK_DURATION;
         attackCooldownTimer = ATTACK_COOLDOWN;
-        state = PlayerState.ATTACKING;
+        attackDirection = aimDirection;
+        setState(PlayerState.ATTACKING);
         setVelocityX(0.0);
     }
 
@@ -315,7 +498,7 @@ public final class Player extends Entity {
         facingDirection = dashDirection;
         dashTimer = DASH_DURATION;
         dashCooldownTimer = DASH_COOLDOWN;
-        state = PlayerState.DODGING;
+        setState(PlayerState.DODGING);
 
         setVelocityX(dashDirection * DASH_SPEED);
         setVelocityY(0.0);
@@ -350,12 +533,12 @@ public final class Player extends Entity {
     }
 
     private void finishAttack() {
-        state = isOnGround() ? PlayerState.IDLE : PlayerState.FALLING;
+        setState(isOnGround() ? PlayerState.IDLE : PlayerState.FALLING);
     }
 
     private void finishDash() {
         setVelocityX(0.0);
-        state = isOnGround() ? PlayerState.IDLE : PlayerState.FALLING;
+        setState(isOnGround() ? PlayerState.IDLE : PlayerState.FALLING);
     }
 
     private void updateHorizontalMovement(InputManager inputManager, double deltaSeconds) {
@@ -369,6 +552,7 @@ public final class Player extends Entity {
 
         if (direction != 0) {
             facingDirection = direction;
+            aimDirection = direction > 0 ? AttackDirection.RIGHT : AttackDirection.LEFT;
         }
 
         double targetVelocityX = direction * MOVE_SPEED;
@@ -378,8 +562,16 @@ public final class Player extends Entity {
     }
 
     private void updateVerticalMovement(InputManager inputManager, double deltaSeconds) {
-        if (inputManager.isJumpPressed() && isOnGround()) {
+        boolean jumpPressed = inputManager.isJumpPressed();
+        if (isOnGround()) {
+            availableAirJumps = MAX_AIR_JUMPS;
+        }
+
+        if (jumpPressed && !wasJumpPressed && (isOnGround() || availableAirJumps > 0)) {
             setVelocityY(-JUMP_SPEED);
+            if (!isOnGround()) {
+                availableAirJumps--;
+            }
             setOnGround(false);
             jumpSoundRequested = true;
         }
@@ -400,10 +592,112 @@ public final class Player extends Entity {
                 && ((int) Math.floor(invulnerabilityTimer * BLINK_FREQUENCY)) % 2 == 0;
     }
 
+    private Map<PlayerState, Animation> createAnimations(double width, double height) {
+        int spriteWidth = Math.max(1, (int) Math.round(width));
+        int spriteHeight = Math.max(1, (int) Math.round(height));
+        Map<PlayerState, Animation> createdAnimations = new EnumMap<>(PlayerState.class);
+
+        createdAnimations.put(
+                PlayerState.IDLE,
+                createAnimation("idle", spriteWidth, spriteHeight, 24, new Color(241, 162, 205), new Color(248, 178, 215))
+        );
+        createdAnimations.put(
+                PlayerState.RUNNING,
+                createAnimation("running", spriteWidth, spriteHeight, 6, new Color(236, 119, 177), new Color(255, 153, 198))
+        );
+        createdAnimations.put(
+                PlayerState.JUMPING,
+                createAnimation("jumping", spriteWidth, spriteHeight, 12, new Color(166, 209, 247), new Color(195, 225, 255))
+        );
+        createdAnimations.put(
+                PlayerState.FALLING,
+                createAnimation("falling", spriteWidth, spriteHeight, 12, new Color(131, 165, 224), new Color(163, 193, 245))
+        );
+        createdAnimations.put(
+                PlayerState.DODGING,
+                createAnimation("dodging", spriteWidth, spriteHeight, 4, new Color(245, 213, 131), new Color(255, 234, 166))
+        );
+        createdAnimations.put(
+                PlayerState.ATTACKING,
+                createAnimation("attacking", spriteWidth, spriteHeight, 4, new Color(249, 119, 138), new Color(255, 158, 166))
+        );
+
+        return createdAnimations;
+    }
+
+    private Animation createAnimation(
+            String animationId,
+            int spriteWidth,
+            int spriteHeight,
+            int frameDelay,
+            Color firstFrameColor,
+            Color secondFrameColor
+    ) {
+        BufferedImage[] frames = {
+                AssetManager.loadOrPlaceholder(
+                        PLAYER_SPRITE_DIRECTORY + animationId + "_0.png",
+                        "player-" + animationId + "-0",
+                        spriteWidth,
+                        spriteHeight,
+                        firstFrameColor
+                ),
+                AssetManager.loadOrPlaceholder(
+                        PLAYER_SPRITE_DIRECTORY + animationId + "_1.png",
+                        "player-" + animationId + "-1",
+                        spriteWidth,
+                        spriteHeight,
+                        secondFrameColor
+                )
+        };
+        return new Animation(frames, frameDelay);
+    }
+
+    private Animation getCurrentAnimation() {
+        return animations.get(state);
+    }
+
+    private void setState(PlayerState newState) {
+        if (state == newState) {
+            return;
+        }
+
+        state = newState;
+        getCurrentAnimation().reset();
+    }
+
+    private void resetAnimations() {
+        for (Animation animation : animations.values()) {
+            animation.reset();
+        }
+    }
+
     private AABB createAttackHitbox(double baseX, double baseY) {
-        double attackX = facingDirection > 0 ? baseX + getWidth() : baseX - ATTACK_WIDTH;
-        double attackY = baseY + ((getHeight() - ATTACK_HEIGHT) * 0.5);
-        return new AABB(attackX, attackY, ATTACK_WIDTH, ATTACK_HEIGHT);
+        return switch (attackDirection) {
+            case LEFT -> new AABB(
+                    baseX - HORIZONTAL_ATTACK_WIDTH,
+                    baseY + ((getHeight() - HORIZONTAL_ATTACK_HEIGHT) * 0.5),
+                    HORIZONTAL_ATTACK_WIDTH,
+                    HORIZONTAL_ATTACK_HEIGHT
+            );
+            case RIGHT -> new AABB(
+                    baseX + getWidth(),
+                    baseY + ((getHeight() - HORIZONTAL_ATTACK_HEIGHT) * 0.5),
+                    HORIZONTAL_ATTACK_WIDTH,
+                    HORIZONTAL_ATTACK_HEIGHT
+            );
+            case UP -> new AABB(
+                    baseX + ((getWidth() - VERTICAL_ATTACK_WIDTH) * 0.5),
+                    baseY - VERTICAL_ATTACK_HEIGHT,
+                    VERTICAL_ATTACK_WIDTH,
+                    VERTICAL_ATTACK_HEIGHT
+            );
+            case DOWN -> new AABB(
+                    baseX + ((getWidth() - VERTICAL_ATTACK_WIDTH) * 0.5),
+                    baseY + getHeight(),
+                    VERTICAL_ATTACK_WIDTH,
+                    VERTICAL_ATTACK_HEIGHT
+            );
+        };
     }
 
     private MagicProjectile createMagicProjectile() {

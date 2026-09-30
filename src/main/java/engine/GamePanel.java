@@ -1,16 +1,27 @@
 package engine;
 
 import entities.Enemy;
+import entities.BossEnemy;
+import entities.BossProjectile;
+import entities.Collectible;
+import entities.CorruptionZone;
 import entities.DialogInteractable;
+import entities.FlyingEnemy;
+import entities.ForestWatcher;
 import entities.Gate;
 import entities.Interactable;
 import entities.LevelExit;
 import entities.Lever;
 import entities.MagicProjectile;
 import entities.ManaPickup;
+import entities.MemoryKey;
 import entities.MysteriousKnight;
 import entities.Platform;
 import entities.Player;
+import entities.PatrolEnemy;
+import entities.PotionPickup;
+import entities.RuneConsole;
+import entities.RuneSymbol;
 import entities.Signpost;
 import entities.Spike;
 import input.InputManager;
@@ -27,10 +38,16 @@ import java.awt.FontMetrics;
 import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.RadialGradientPaint;
 import java.awt.RenderingHints;
+import java.awt.geom.Point2D;
 import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 
 public final class GamePanel extends JPanel {
     public static final int PANEL_WIDTH = 1280;
@@ -39,44 +56,113 @@ public final class GamePanel extends JPanel {
     private static final double PLAYER_WIDTH_RATIO = 0.75;
     private static final double PLAYER_HEIGHT_RATIO = 1.0;
     private static final double INTERACTION_RANGE = 24.0;
+    private static final int MAX_PARTICLES = 160;
+    private static final int MIN_DARKNESS_ALPHA = 28;
+    private static final int MAX_DARKNESS_ALPHA = 210;
+    private static final float PLAYER_LIGHT_RADIUS = 260.0f;
+    private static final int PHASE_THREE_INDEX = 2;
+    private static final int FINAL_LEVEL_INDEX = 4;
+    private static final double FOREST_REACTION_DURATION = 10.0;
+    private static final double ENDING_DURATION = 11.0;
     private static final String[] LEVEL_1 = {
-            "................................",
-            "................................",
-            "................................",
-            "................................",
-            "..........####..................",
-            "................................",
-            "..................####..........",
-            "................................",
-            "......###.......................",
-            "................................",
-            "......................###.......",
-            "................................",
-            "......................V.........",
-            ".............####...............",
-            "................................",
-            "..P..L.MS...E....^^..G...X.....",
-            "################################"
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "..P.CS..1....2..H.M....3..O.R..G.C..X....",
+            "########################################"
     };
     private static final String[] LEVEL_2 = {
-            "................................",
-            "................................",
-            "................................",
-            "................................",
-            ".......####.....................",
-            "................................",
-            "................####............",
-            "................................",
-            "............###.................",
-            "................................",
-            "......................####......",
-            "................................",
-            ".................###............",
-            "................................",
-            "..P...N.^^....E....B....^^...X..",
-            "################################"
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "...........####.........................",
+            "........................................",
+            "........................................",
+            "....................####................",
+            "........................................",
+            "........................................",
+            "......####..............................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "..P.C..M..H.E.......V....O..E..C...X....",
+            "########################################"
     };
-    private static final List<String[]> ALL_LEVELS = List.of(LEVEL_1, LEVEL_2);
+    private static final String[] LEVEL_3 = {
+            "........................................",
+            "........................................",
+            "........................................",
+            "........####............................",
+            "........................................",
+            "........................................",
+            ".................#####..................",
+            "........................................",
+            "........................................",
+            "............................####........",
+            "........................................",
+            "........................................",
+            "............####........................",
+            "........................................",
+            "..P..N.C.K...w....H.....W...O..G.C..X.....",
+            "########################################"
+    };
+    private static final String[] LEVEL_4 = {
+            "........................................",
+            "........................................",
+            "........................................",
+            "............................X.C.........",
+            "..........................####..........",
+            "........................................",
+            "........................................",
+            "....................V...................",
+            "..................####..................",
+            "........................................",
+            "............V...C.......................",
+            "..........####..........................",
+            "........................................",
+            "......V....O............................",
+            "........................................",
+            "..P.H..E..C..............................",
+            "########################################"
+    };
+    private static final String[] LEVEL_5 = {
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "..........####################..........",
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            "........................................",
+            ".......####..................####.......",
+            "........................................",
+            "........................................",
+            "........................................",
+            "..P.H.O.^^..C.......B......C.....^^^......",
+            "########################################"
+    };
+    private static final List<String[]> ALL_LEVELS = List.of(LEVEL_1, LEVEL_2, LEVEL_3, LEVEL_4, LEVEL_5);
+    private static final List<String> LEVEL_BGM_RESOURCES = List.of(
+            "/audio/level_1.wav",
+            "/audio/level_2.wav",
+            "/audio/level_3.wav",
+            "/audio/level_4.wav",
+            "/audio/level_5.wav"
+    );
 
     private final Object worldLock = new Object();
     private final GameLoop gameLoop;
@@ -96,9 +182,20 @@ public final class GamePanel extends JPanel {
     private List<Platform> platforms = List.of();
     private List<Spike> spikes = List.of();
     private final List<MagicProjectile> magicProjectiles = new ArrayList<>();
+    private final List<Particle> particles = new ArrayList<>();
     private PhysicsWorld physicsWorld;
     private List<Signpost> signposts = List.of();
     private List<MysteriousKnight> mysteriousKnights = List.of();
+    private List<RuneSymbol> runeSymbols = List.of();
+    private List<RuneConsole> runeConsoles = List.of();
+    private List<MemoryKey> memoryKeys = List.of();
+    private List<ForestWatcher> forestWatchers = List.of();
+    private List<PotionPickup> potionPickups = List.of();
+    private List<Collectible> collectibles = List.of();
+    private final List<BossProjectile> bossProjectiles = new ArrayList<>();
+    private final List<CorruptionZone> corruptionZones = new ArrayList<>();
+    private final EnumSet<RuneSymbol.Rune> observedRunes = EnumSet.noneOf(RuneSymbol.Rune.class);
+    private final Set<String> collectedWorldItemIds = new HashSet<>();
     private int worldWidth;
     private int worldHeight;
     private int currentLevelIndex;
@@ -107,6 +204,20 @@ public final class GamePanel extends JPanel {
     private volatile double interpolationAlpha;
     private boolean wasInteractPressed;
     private boolean wasConfirmPressed;
+    private boolean wasMovingLeftPressed;
+    private boolean wasMovingRightPressed;
+    private boolean wasMovingUpPressed;
+    private boolean wasMovingDownPressed;
+    private RuneConsole activeRuneConsole;
+    private ArrowSequence memorySequence;
+    private StealthState stealthState = StealthState.INACTIVE;
+    private double forestReactionRemainingSeconds;
+    private CollapsePhase collapsePhase;
+    private double collapseElapsedSeconds;
+    private double endingElapsedSeconds;
+    private boolean letterUnlocked;
+    private boolean replayingLetter;
+    private int mainMenuSelection;
 
     public GamePanel(InputManager inputManager) {
         this.inputManager = inputManager;
@@ -125,6 +236,8 @@ public final class GamePanel extends JPanel {
         setFocusable(true);
         setBackground(new Color(32, 37, 58));
         addKeyListener(inputManager);
+        addMouseListener(inputManager);
+        addMouseMotionListener(inputManager);
     }
 
     public void start() {
@@ -133,20 +246,22 @@ public final class GamePanel extends JPanel {
 
     public void stop() {
         gameLoop.stop();
+        audioManager.closeAll();
     }
 
     public void fixedUpdate(double deltaSeconds) {
         synchronized (worldLock) {
-            boolean confirmPressed = inputManager.isConfirmPressed();
-            boolean confirmJustPressed = confirmPressed && !wasConfirmPressed;
-            wasConfirmPressed = confirmPressed;
+            InputFrame inputFrame = pollInputFrame();
 
             switch (gameState) {
-                case MAIN_MENU -> updateMainMenu(confirmJustPressed);
+                case MAIN_MENU -> updateMainMenu(inputFrame);
                 case PLAYING -> updateGameplay(deltaSeconds);
                 case DIALOGUE -> updateDialog(deltaSeconds);
-                case GAME_OVER -> updateGameOver(confirmJustPressed);
-                case ENDING -> updateEnding(confirmJustPressed);
+                case RUNE_PUZZLE -> updateRunePuzzle(inputFrame);
+                case MEMORY_SEQUENCE -> updateMemorySequence(deltaSeconds, inputFrame);
+                case GAME_OVER -> updateGameOver(deltaSeconds, inputFrame.confirmJustPressed());
+                case COLLAPSE -> updateCollapse(deltaSeconds);
+                case ENDING -> updateEnding(deltaSeconds, inputFrame.confirmJustPressed());
             }
         }
     }
@@ -182,10 +297,14 @@ public final class GamePanel extends JPanel {
 
         renderWorld(g2d);
         synchronized (worldLock) {
+            drawDynamicLighting(g2d);
             hud.render(g2d);
             switch (gameState) {
                 case DIALOGUE -> dialogManager.render(g2d, PANEL_WIDTH, PANEL_HEIGHT);
+                case RUNE_PUZZLE -> drawRunePuzzle(g2d);
+                case MEMORY_SEQUENCE -> drawMemorySequence(g2d);
                 case GAME_OVER -> drawGameOver(g2d);
+                case COLLAPSE -> drawCollapse(g2d);
                 case ENDING -> drawEnding(g2d);
                 default -> {
                 }
@@ -205,8 +324,15 @@ public final class GamePanel extends JPanel {
                 drawGates(worldGraphics);
                 drawSpikes(worldGraphics);
                 drawManaPickups(worldGraphics);
+                drawPotionPickups(worldGraphics);
+                drawCollectibles(worldGraphics);
+                drawMemoryKeys(worldGraphics);
+                drawForestWatchers(worldGraphics);
+                drawCorruptionZones(worldGraphics);
                 drawEnemies(worldGraphics);
+                drawBossProjectiles(worldGraphics);
                 drawMagicProjectiles(worldGraphics);
+                drawParticles(worldGraphics);
                 drawInteractables(worldGraphics);
                 player.render(worldGraphics, interpolationAlpha);
             }
@@ -216,22 +342,64 @@ public final class GamePanel extends JPanel {
     }
 
     private void drawBackground(Graphics2D g2d) {
+        Color topColor;
+        Color bottomColor;
+        if (collapsePhase == CollapsePhase.DAWN || gameState == GameState.ENDING) {
+            topColor = new Color(244, 181, 116);
+            bottomColor = new Color(103, 151, 151);
+        } else {
+            int finalLevelIndex = Math.max(1, ALL_LEVELS.size() - 1);
+            float levelProgress = Math.min(1.0f, currentLevelIndex / (float) finalLevelIndex);
+            topColor = interpolateColor(new Color(91, 157, 187), new Color(49, 45, 79), levelProgress);
+            bottomColor = interpolateColor(new Color(36, 76, 76), new Color(17, 19, 38), levelProgress);
+        }
         GradientPaint sky = new GradientPaint(
                 0,
                 0,
-                new Color(71, 111, 173),
+                topColor,
                 0,
                 PANEL_HEIGHT,
-                new Color(23, 28, 49)
+                bottomColor
         );
 
         g2d.setPaint(sky);
         g2d.fillRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT);
     }
 
+    private void drawDynamicLighting(Graphics2D g2d) {
+        int finalLevelIndex = Math.max(1, ALL_LEVELS.size() - 1);
+        float levelProgress = Math.min(1.0f, currentLevelIndex / (float) finalLevelIndex);
+        int edgeAlpha = Math.round(
+                MIN_DARKNESS_ALPHA + (MAX_DARKNESS_ALPHA - MIN_DARKNESS_ALPHA) * levelProgress
+        );
+        float screenX = (float) (
+                player.getRenderX(interpolationAlpha) + player.getWidth() * 0.5 - camera.getX()
+        );
+        float screenY = (float) (
+                player.getRenderY(interpolationAlpha) + player.getHeight() * 0.5 - camera.getY()
+        );
+
+        RadialGradientPaint darkness = new RadialGradientPaint(
+                new Point2D.Float(screenX, screenY),
+                PLAYER_LIGHT_RADIUS,
+                new float[] {0.0f, 0.42f, 1.0f},
+                new Color[] {
+                        new Color(0, 0, 0, 0),
+                        new Color(0, 0, 0, edgeAlpha / 3),
+                        new Color(0, 0, 0, edgeAlpha)
+                }
+        );
+        g2d.setPaint(darkness);
+        g2d.fillRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT);
+    }
+
     private void drawMainMenu(Graphics2D g2d) {
-        drawCenteredText(g2d, "O Caminho para o Amanhecer", PANEL_HEIGHT / 2 - 30, 38, new Color(246, 226, 174));
-        drawCenteredText(g2d, "Pressione Enter para comecar", PANEL_HEIGHT / 2 + 30, 20, new Color(222, 232, 249));
+        drawCenteredText(g2d, "O Caminho para o Amanhecer", PANEL_HEIGHT / 2 - 86, 38, new Color(246, 226, 174));
+        drawMenuOption(g2d, "Iniciar jornada", PANEL_HEIGHT / 2 - 20, mainMenuSelection == 0);
+        if (letterUnlocked) {
+            drawMenuOption(g2d, "Rever a carta", PANEL_HEIGHT / 2 + 24, mainMenuSelection == 1);
+        }
+        drawCenteredText(g2d, "Setas para escolher - Enter para confirmar", PANEL_HEIGHT / 2 + 86, 16, new Color(222, 232, 249));
     }
 
     private void drawGameOver(Graphics2D g2d) {
@@ -248,10 +416,174 @@ public final class GamePanel extends JPanel {
     }
 
     private void drawEnding(Graphics2D g2d) {
-        g2d.setColor(new Color(8, 12, 27, 172));
+        g2d.setColor(new Color(8, 12, 27, 205));
         g2d.fillRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT);
-        drawCenteredText(g2d, "O amanhecer chegou.", PANEL_HEIGHT / 2 - 12, 30, new Color(255, 230, 164));
-        drawCenteredText(g2d, "Pressione Enter para voltar ao menu", PANEL_HEIGHT / 2 + 34, 18, new Color(218, 228, 247));
+        drawCenteredText(g2d, replayingLetter ? "A carta do Cavaleiro" : "O amanhecer chegou.", PANEL_HEIGHT / 2 - 112, 30, new Color(255, 230, 164));
+
+        if (endingElapsedSeconds >= 1.2) {
+            drawCenteredText(
+                    g2d,
+                    "Voce encontrou a saida porque continuou caminhando.",
+                    PANEL_HEIGHT / 2 - 42,
+                    20,
+                    new Color(233, 235, 244)
+            );
+        }
+        if (endingElapsedSeconds >= 3.2) {
+            drawCenteredText(
+                    g2d,
+                    "Quando a escuridao chamar seu nome, procure a primeira luz.",
+                    PANEL_HEIGHT / 2 - 6,
+                    20,
+                    new Color(233, 235, 244)
+            );
+        }
+        if (endingElapsedSeconds >= 5.2) {
+            drawCenteredText(g2d, "Fim.", PANEL_HEIGHT / 2 + 58, 30, new Color(255, 230, 164));
+        }
+        if (endingElapsedSeconds >= 6.8) {
+            drawCenteredText(g2d, "Obrigado por caminhar comigo.", PANEL_HEIGHT / 2 + 102, 22, new Color(218, 228, 247));
+        }
+        if (endingElapsedSeconds >= 8.0) {
+            drawCenteredText(g2d, "Pressione Enter para voltar ao menu", PANEL_HEIGHT / 2 + 150, 16, new Color(174, 197, 225));
+        }
+    }
+
+    private void drawMenuOption(Graphics2D g2d, String label, int baselineY, boolean selected) {
+        Color color = selected ? new Color(255, 230, 164) : new Color(190, 204, 227);
+        String prefix = selected ? "> " : "  ";
+        drawCenteredText(g2d, prefix + label, baselineY, 22, color);
+    }
+
+    private void drawRunePuzzle(Graphics2D g2d) {
+        if (activeRuneConsole == null) {
+            return;
+        }
+
+        g2d.setColor(new Color(8, 11, 25, 220));
+        g2d.fillRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT);
+        drawCenteredText(g2d, "As Imagens da Parede", PANEL_HEIGHT / 2 - 130, 30, new Color(255, 226, 164));
+        drawCenteredText(
+                g2d,
+                "Escolha os simbolos na ordem encontrada.",
+                PANEL_HEIGHT / 2 - 88,
+                19,
+                new Color(219, 230, 248)
+        );
+        drawCenteredText(
+                g2d,
+                "Simbolo: " + activeRuneConsole.getSelectedRune().getDisplayName().toUpperCase(),
+                PANEL_HEIGHT / 2 - 8,
+                28,
+                activeRuneConsole.getSelectedRune().getColor()
+        );
+        drawCenteredText(
+                g2d,
+                "Progresso: " + activeRuneConsole.getSolvedSymbols() + " / " + activeRuneConsole.getSolutionLength(),
+                PANEL_HEIGHT / 2 + 40,
+                19,
+                new Color(217, 224, 244)
+        );
+        drawCenteredText(g2d, "A/D ou Setas: escolher - E: confirmar", PANEL_HEIGHT / 2 + 100, 17, new Color(180, 202, 235));
+    }
+
+    private void drawMemorySequence(Graphics2D g2d) {
+        if (memorySequence == null) {
+            return;
+        }
+
+        g2d.setColor(new Color(10, 12, 28, 225));
+        g2d.fillRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT);
+        drawCenteredText(g2d, "O Caminho dos Olhos", PANEL_HEIGHT / 2 - 142, 30, new Color(231, 183, 255));
+        drawCenteredText(g2d, "Repita a sequencia antes que a floresta acorde.", PANEL_HEIGHT / 2 - 100, 19, new Color(224, 230, 248));
+
+        int tokenWidth = 132;
+        int tokenHeight = 48;
+        int gap = 14;
+        int totalWidth = memorySequence.getSequence().size() * tokenWidth
+                + (memorySequence.getSequence().size() - 1) * gap;
+        int startX = (PANEL_WIDTH - totalWidth) / 2;
+        int tokenY = PANEL_HEIGHT / 2 - tokenHeight / 2;
+        for (int index = 0; index < memorySequence.getSequence().size(); index++) {
+            boolean completed = index < memorySequence.getCurrentIndex();
+            g2d.setColor(completed ? new Color(104, 184, 132) : new Color(58, 65, 98));
+            int tokenX = startX + index * (tokenWidth + gap);
+            g2d.fillRoundRect(tokenX, tokenY, tokenWidth, tokenHeight, 12, 12);
+            g2d.setColor(completed ? new Color(222, 255, 228) : new Color(217, 226, 248));
+            g2d.drawRoundRect(tokenX, tokenY, tokenWidth, tokenHeight, 12, 12);
+            drawTextAt(g2d, memorySequence.getSequence().get(index).getLabel(), tokenX + 16, tokenY + 30, 16, new Color(244, 247, 255));
+        }
+
+        int seconds = (int) Math.ceil(memorySequence.getRemainingSeconds());
+        drawCenteredText(g2d, "Tempo: " + seconds + "s", PANEL_HEIGHT / 2 + 96, 22, new Color(255, 205, 145));
+        drawCenteredText(g2d, "Use W/A/S/D ou as setas", PANEL_HEIGHT / 2 + 138, 17, new Color(180, 202, 235));
+    }
+
+    private void drawCollapse(Graphics2D g2d) {
+        if (collapsePhase == null) {
+            return;
+        }
+
+        float progress = (float) Math.min(1.0, collapseElapsedSeconds / 8.0);
+        int alpha = Math.min(220, 50 + Math.round(progress * 170.0f));
+        g2d.setColor(new Color(63, 21, 70, alpha));
+        g2d.fillRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT);
+
+        if (collapsePhase != CollapsePhase.DAWN) {
+            ThreadLocalRandom random = ThreadLocalRandom.current();
+            for (int index = 0; index < 12; index++) {
+                int y = random.nextInt(PANEL_HEIGHT);
+                int width = random.nextInt(80, 280);
+                g2d.setColor(new Color(227, 104, 195, random.nextInt(30, 100)));
+                g2d.fillRect(random.nextInt(PANEL_WIDTH - width), y, width, random.nextInt(2, 8));
+            }
+        }
+
+        if (collapsePhase == CollapsePhase.KNIGHT_ARRIVAL
+                || collapsePhase == CollapsePhase.STRIKE
+                || collapsePhase == CollapsePhase.DAWN) {
+            drawCinematicKnight(g2d);
+        }
+
+        if (collapsePhase == CollapsePhase.CORRUPTION) {
+            drawCenteredText(g2d, "A floresta ainda esta dentro de voce.", 90, 22, new Color(246, 196, 238));
+        } else if (collapsePhase == CollapsePhase.KNIGHT_ARRIVAL) {
+            drawCenteredText(g2d, "Passos.", 90, 22, new Color(238, 236, 247));
+        } else if (collapsePhase == CollapsePhase.STRIKE) {
+            drawCenteredText(g2d, "Um unico golpe.", 90, 24, new Color(255, 230, 164));
+        } else if (collapsePhase == CollapsePhase.DAWN) {
+            drawCenteredText(g2d, "O primeiro raio de sol.", 90, 24, new Color(255, 230, 164));
+        }
+    }
+
+    private void drawCinematicKnight(Graphics2D g2d) {
+        double arrivalProgress = Math.min(1.0, Math.max(0.0, (collapseElapsedSeconds - 3.6) / 1.6));
+        int knightX = (int) Math.round(PANEL_WIDTH - 140 - arrivalProgress * 330.0);
+        int knightY = PANEL_HEIGHT - 270;
+
+        g2d.setColor(new Color(37, 39, 62));
+        g2d.fillRoundRect(knightX, knightY, 62, 150, 18, 18);
+        g2d.setColor(new Color(169, 183, 212));
+        g2d.fillRoundRect(knightX + 12, knightY + 12, 38, 44, 14, 14);
+        g2d.setColor(new Color(246, 223, 149));
+        g2d.fillOval(knightX + 22, knightY + 26, 7, 7);
+        g2d.fillOval(knightX + 34, knightY + 26, 7, 7);
+
+        if (collapsePhase == CollapsePhase.STRIKE || collapsePhase == CollapsePhase.DAWN) {
+            g2d.setColor(new Color(255, 242, 189));
+            g2d.fillRect(knightX - 130, knightY + 34, 142, 8);
+        }
+    }
+
+    private void drawTextAt(Graphics2D g2d, String text, int x, int baselineY, int fontSize, Color color) {
+        Font previousFont = g2d.getFont();
+        g2d.setFont(new Font(Font.SANS_SERIF, Font.BOLD, fontSize));
+        try {
+            g2d.setColor(color);
+            g2d.drawString(text, x, baselineY);
+        } finally {
+            g2d.setFont(previousFont);
+        }
     }
 
     private void drawCenteredText(Graphics2D g2d, String text, int baselineY, int fontSize, Color color) {
@@ -265,6 +597,14 @@ public final class GamePanel extends JPanel {
         } finally {
             g2d.setFont(previousFont);
         }
+    }
+
+    private Color interpolateColor(Color from, Color to, float progress) {
+        float clampedProgress = Math.max(0.0f, Math.min(1.0f, progress));
+        int red = Math.round(from.getRed() + (to.getRed() - from.getRed()) * clampedProgress);
+        int green = Math.round(from.getGreen() + (to.getGreen() - from.getGreen()) * clampedProgress);
+        int blue = Math.round(from.getBlue() + (to.getBlue() - from.getBlue()) * clampedProgress);
+        return new Color(red, green, blue);
     }
 
     private void drawGround(Graphics2D g2d) {
@@ -311,15 +651,57 @@ public final class GamePanel extends JPanel {
         }
     }
 
+    private void drawPotionPickups(Graphics2D g2d) {
+        for (PotionPickup potionPickup : potionPickups) {
+            potionPickup.render(g2d);
+        }
+    }
+
+    private void drawCollectibles(Graphics2D g2d) {
+        for (Collectible collectible : collectibles) {
+            collectible.render(g2d);
+        }
+    }
+
+    private void drawMemoryKeys(Graphics2D g2d) {
+        for (MemoryKey memoryKey : memoryKeys) {
+            memoryKey.render(g2d);
+        }
+    }
+
+    private void drawForestWatchers(Graphics2D g2d) {
+        for (ForestWatcher forestWatcher : forestWatchers) {
+            forestWatcher.render(g2d);
+        }
+    }
+
+    private void drawCorruptionZones(Graphics2D g2d) {
+        for (CorruptionZone corruptionZone : corruptionZones) {
+            corruptionZone.render(g2d);
+        }
+    }
+
     private void drawEnemies(Graphics2D g2d) {
         for (Enemy enemy : enemies) {
             enemy.render(g2d, interpolationAlpha);
         }
     }
 
+    private void drawBossProjectiles(Graphics2D g2d) {
+        for (BossProjectile bossProjectile : bossProjectiles) {
+            bossProjectile.render(g2d);
+        }
+    }
+
     private void drawMagicProjectiles(Graphics2D g2d) {
         for (MagicProjectile magicProjectile : magicProjectiles) {
             magicProjectile.render(g2d);
+        }
+    }
+
+    private void drawParticles(Graphics2D g2d) {
+        for (Particle particle : particles) {
+            particle.render(g2d);
         }
     }
 
@@ -334,6 +716,14 @@ public final class GamePanel extends JPanel {
 
         for (Lever lever : levers) {
             lever.render(g2d);
+        }
+
+        for (RuneSymbol runeSymbol : runeSymbols) {
+            runeSymbol.render(g2d);
+        }
+
+        for (RuneConsole runeConsole : runeConsoles) {
+            runeConsole.render(g2d);
         }
     }
 
@@ -373,6 +763,30 @@ public final class GamePanel extends JPanel {
         return List.copyOf(foundKnights);
     }
 
+    private List<RuneSymbol> extractRuneSymbols(List<Interactable> interactables) {
+        List<RuneSymbol> foundSymbols = new ArrayList<>();
+
+        for (Interactable interactable : interactables) {
+            if (interactable instanceof RuneSymbol runeSymbol) {
+                foundSymbols.add(runeSymbol);
+            }
+        }
+
+        return List.copyOf(foundSymbols);
+    }
+
+    private List<RuneConsole> extractRuneConsoles(List<Interactable> interactables) {
+        List<RuneConsole> foundConsoles = new ArrayList<>();
+
+        for (Interactable interactable : interactables) {
+            if (interactable instanceof RuneConsole runeConsole) {
+                foundConsoles.add(runeConsole);
+            }
+        }
+
+        return List.copyOf(foundConsoles);
+    }
+
     private void loadLevel(int index) {
         if (index < 0 || index >= ALL_LEVELS.size()) {
             throw new IllegalArgumentException("Invalid level index: " + index);
@@ -387,7 +801,7 @@ public final class GamePanel extends JPanel {
 
         platforms = level.getPlatforms();
         spikes = level.getSpikes();
-        enemies = level.getEnemies();
+        enemies = new ArrayList<>(level.getEnemies());
         gates = level.getGates();
         levelExits = level.getExits();
         manaPickups = level.getManaPickups();
@@ -395,9 +809,26 @@ public final class GamePanel extends JPanel {
         signposts = extractSignposts(interactables);
         levers = extractLevers(interactables);
         mysteriousKnights = extractMysteriousKnights(interactables);
+        runeSymbols = extractRuneSymbols(interactables);
+        runeConsoles = extractRuneConsoles(interactables);
+        memoryKeys = level.getMemoryKeys();
+        forestWatchers = level.getForestWatchers();
+        potionPickups = level.getPotionPickups();
+        collectibles = level.getCollectibles();
+        restoreCollectedWorldItems();
 
         physicsWorld = new PhysicsWorld(worldWidth, worldHeight, platforms, gates);
         magicProjectiles.clear();
+        bossProjectiles.clear();
+        corruptionZones.clear();
+        particles.clear();
+        observedRunes.clear();
+        activeRuneConsole = null;
+        memorySequence = null;
+        stealthState = index == PHASE_THREE_INDEX ? StealthState.SNEAKING : StealthState.INACTIVE;
+        forestReactionRemainingSeconds = 0.0;
+        collapsePhase = null;
+        collapseElapsedSeconds = 0.0;
         player.respawn(level.getPlayerStartX(), level.getPlayerStartY());
         physicsWorld.resolve(player);
         player.refreshState();
@@ -406,56 +837,144 @@ public final class GamePanel extends JPanel {
         camera.update(player);
         wasInteractPressed = false;
         dialogManager.close();
+        startBackgroundMusic(index);
     }
 
-    private void updateMainMenu(boolean confirmJustPressed) {
-        if (confirmJustPressed) {
-            gameState = GameState.PLAYING;
+    private void beginNewJourney() {
+        player.resetJourneyInventory();
+        collectedWorldItemIds.clear();
+        loadLevel(0);
+    }
+
+    private void restoreCollectedWorldItems() {
+        for (int index = 0; index < potionPickups.size(); index++) {
+            if (collectedWorldItemIds.contains(getWorldItemId("potion", index))) {
+                potionPickups.get(index).markCollected();
+            }
+        }
+
+        for (int index = 0; index < collectibles.size(); index++) {
+            if (collectedWorldItemIds.contains(getWorldItemId("collectible", index))) {
+                collectibles.get(index).markCollected();
+            }
         }
     }
 
+    private void startBackgroundMusic(int levelIndex) {
+        String trackId = "level-" + (levelIndex + 1);
+        String resourcePath = LEVEL_BGM_RESOURCES.get(levelIndex);
+        if (!audioManager.playBackgroundLoop(trackId, resourcePath)) {
+            System.err.println("BGM resource not found; procedural fallback enabled: " + resourcePath);
+        }
+    }
+
+    private void updateMainMenu(InputFrame inputFrame) {
+        int optionCount = letterUnlocked ? 2 : 1;
+        if (inputFrame.movingUpJustPressed()) {
+            mainMenuSelection = Math.floorMod(mainMenuSelection - 1, optionCount);
+        } else if (inputFrame.movingDownJustPressed()) {
+            mainMenuSelection = Math.floorMod(mainMenuSelection + 1, optionCount);
+        }
+
+        if (!inputFrame.confirmJustPressed()) {
+            return;
+        }
+
+        if (mainMenuSelection == 0) {
+            replayingLetter = false;
+            beginNewJourney();
+            gameState = GameState.PLAYING;
+            return;
+        }
+
+        replayingLetter = true;
+        endingElapsedSeconds = 0.0;
+        gameState = GameState.ENDING;
+    }
+
     private void updateGameplay(double deltaSeconds) {
+        updateAttackAimFromMouse();
+        boolean wasAirborne = !player.isOnGround();
         player.fixedUpdate(inputManager, deltaSeconds);
         playPendingPlayerSoundEvents();
         physicsWorld.resolve(player);
+        if (wasAirborne && player.isOnGround()) {
+            spawnLandingDust();
+        }
         spawnPendingMagicProjectile();
         updateMagicProjectiles(deltaSeconds);
+        if (gameState != GameState.PLAYING) {
+            camera.update(player, deltaSeconds);
+            return;
+        }
         updateEnemies(deltaSeconds);
+        collectBossAttackEvents();
+        updateBossProjectiles(deltaSeconds);
+        updateCorruptionZones(deltaSeconds);
         handlePlayerAttacks();
+        if (gameState != GameState.PLAYING) {
+            camera.update(player, deltaSeconds);
+            return;
+        }
         handleEnemyContactDamage();
         handleHazards();
+        updateParticles(deltaSeconds);
         playPendingPlayerSoundEvents();
         if (player.isDead()) {
+            camera.update(player, deltaSeconds);
             gameState = GameState.GAME_OVER;
             return;
         }
 
         handleManaPickups();
+        handlePotionPickups();
+        handleCollectibles();
+        handleMemoryKeys();
+        if (gameState != GameState.PLAYING) {
+            camera.update(player, deltaSeconds);
+            return;
+        }
+        updateStealthEncounter(deltaSeconds);
+        if (gameState != GameState.PLAYING) {
+            camera.update(player, deltaSeconds);
+            return;
+        }
         player.refreshState();
         handleInteraction();
         handleLevelTransition();
-        camera.update(player);
+        camera.update(player, deltaSeconds);
     }
 
-    private void updateGameOver(boolean confirmJustPressed) {
+    private void updateAttackAimFromMouse() {
+        if (!inputManager.hasMousePosition()) {
+            return;
+        }
+
+        player.updateAttackAim(
+                inputManager.getMouseX() + camera.getX(),
+                inputManager.getMouseY() + camera.getY()
+        );
+    }
+
+    private void updateGameOver(double deltaSeconds, boolean confirmJustPressed) {
+        camera.update(player);
+        updateParticles(deltaSeconds);
         if (!confirmJustPressed) {
             return;
         }
 
-        magicProjectiles.clear();
-        player.respawn();
-        physicsWorld.resolve(player);
-        player.refreshState();
-        camera.update(player);
-        wasInteractPressed = false;
+        loadLevel(currentLevelIndex);
         gameState = GameState.PLAYING;
     }
 
-    private void updateEnding(boolean confirmJustPressed) {
-        if (!confirmJustPressed) {
+    private void updateEnding(double deltaSeconds, boolean confirmJustPressed) {
+        endingElapsedSeconds += deltaSeconds;
+        if (endingElapsedSeconds < 8.0 || (!confirmJustPressed && endingElapsedSeconds < ENDING_DURATION)) {
             return;
         }
 
+        replayingLetter = false;
+        mainMenuSelection = 0;
         loadLevel(0);
         gameState = GameState.MAIN_MENU;
     }
@@ -483,6 +1002,63 @@ public final class GamePanel extends JPanel {
         }
     }
 
+    private void collectBossAttackEvents() {
+        for (Enemy enemy : enemies) {
+            if (!(enemy instanceof BossEnemy bossEnemy) || bossEnemy.isDead()) {
+                continue;
+            }
+
+            BossProjectile projectile;
+            while ((projectile = bossEnemy.consumePendingProjectile()) != null) {
+                bossProjectiles.add(projectile);
+            }
+
+            CorruptionZone corruptionZone;
+            while ((corruptionZone = bossEnemy.consumePendingCorruptionZone()) != null) {
+                corruptionZones.add(corruptionZone);
+            }
+        }
+    }
+
+    private void updateBossProjectiles(double deltaSeconds) {
+        Iterator<BossProjectile> iterator = bossProjectiles.iterator();
+        while (iterator.hasNext()) {
+            BossProjectile projectile = iterator.next();
+            projectile.fixedUpdate(deltaSeconds);
+            if (projectile.isOutsideWorld(worldWidth, worldHeight)) {
+                iterator.remove();
+                continue;
+            }
+
+            if (projectile.getBounds().intersects(player.getBounds())) {
+                if (damagePlayer(1)) {
+                    player.applyKnockbackFrom(projectile.getBounds().getLeft());
+                }
+                projectile.deactivate();
+            }
+
+            if (!projectile.isActive()) {
+                iterator.remove();
+            }
+        }
+    }
+
+    private void updateCorruptionZones(double deltaSeconds) {
+        Iterator<CorruptionZone> iterator = corruptionZones.iterator();
+        while (iterator.hasNext()) {
+            CorruptionZone corruptionZone = iterator.next();
+            corruptionZone.fixedUpdate(deltaSeconds);
+            if (!corruptionZone.isActive()) {
+                iterator.remove();
+                continue;
+            }
+
+            if (corruptionZone.isDangerous() && corruptionZone.getBounds().intersects(player.getBounds())) {
+                damagePlayer(1);
+            }
+        }
+    }
+
     private void spawnPendingMagicProjectile() {
         MagicProjectile projectile = player.consumePendingMagicProjectile();
         if (projectile != null) {
@@ -506,7 +1082,7 @@ public final class GamePanel extends JPanel {
                     continue;
                 }
 
-                enemy.takeDamage(projectile.getDamage());
+                damageEnemy(enemy, projectile.getDamage());
                 projectile.deactivate();
                 break;
             }
@@ -528,7 +1104,7 @@ public final class GamePanel extends JPanel {
                 continue;
             }
 
-            enemy.takeDamage(1);
+            damageEnemy(enemy, 1);
         }
     }
 
@@ -539,10 +1115,27 @@ public final class GamePanel extends JPanel {
                 continue;
             }
 
-            player.takeDamage(1);
+            if (enemy instanceof FlyingEnemy && isStompingFlyingEnemy(playerBounds, enemy.getBounds())) {
+                player.setPosition(player.getX(), enemy.getY() - player.getHeight());
+                damageEnemy(enemy, 1);
+                player.bounceFromEnemy();
+                camera.shake(6.0, 0.10);
+                return;
+            }
+
+            if (damagePlayer(1)) {
+                player.applyKnockbackFrom(enemy.getX() + enemy.getWidth() * 0.5);
+            }
             physicsWorld.resolve(player);
             break;
         }
+    }
+
+    private boolean isStompingFlyingEnemy(AABB playerBounds, AABB enemyBounds) {
+        double allowedOverlap = Math.max(12.0, enemyBounds.getBottom() - enemyBounds.getTop()) * 0.45;
+        return player.getVelocityY() > 0.0
+                && playerBounds.getTop() < enemyBounds.getTop()
+                && playerBounds.getBottom() <= enemyBounds.getTop() + allowedOverlap;
     }
 
     private void handleHazards() {
@@ -552,7 +1145,7 @@ public final class GamePanel extends JPanel {
                 continue;
             }
 
-            player.takeDamage(1);
+            damagePlayer(1);
             physicsWorld.resolve(player);
             break;
         }
@@ -567,7 +1160,388 @@ public final class GamePanel extends JPanel {
         }
     }
 
+    private void handlePotionPickups() {
+        AABB playerBounds = player.getBounds();
+        for (int index = 0; index < potionPickups.size(); index++) {
+            PotionPickup potionPickup = potionPickups.get(index);
+            if (!playerBounds.intersects(potionPickup.getBounds()) || !potionPickup.tryCollect(player)) {
+                continue;
+            }
+
+            collectedWorldItemIds.add(getWorldItemId("potion", index));
+            spawnItemCollectionParticles(potionPickup.getType().getHighlightColor());
+        }
+    }
+
+    private void handleCollectibles() {
+        AABB playerBounds = player.getBounds();
+        for (int index = 0; index < collectibles.size(); index++) {
+            Collectible collectible = collectibles.get(index);
+            if (!playerBounds.intersects(collectible.getBounds()) || !collectible.tryCollect(player)) {
+                continue;
+            }
+
+            collectedWorldItemIds.add(getWorldItemId("collectible", index));
+            spawnItemCollectionParticles(new Color(255, 226, 123));
+        }
+    }
+
+    private String getWorldItemId(String type, int index) {
+        return currentLevelIndex + ":" + type + ":" + index;
+    }
+
+    private void spawnItemCollectionParticles(Color color) {
+        double originX = player.getX() + player.getWidth() * 0.5;
+        double originY = player.getY() + player.getHeight() * 0.5;
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        for (int index = 0; index < 10; index++) {
+            addParticle(new Particle(
+                    originX,
+                    originY,
+                    random.nextDouble(-120.0, 120.0),
+                    random.nextDouble(-180.0, -40.0),
+                    random.nextDouble(0.22, 0.48),
+                    color,
+                    random.nextInt(3, 6)
+            ));
+        }
+    }
+
+    private void handleMemoryKeys() {
+        if (currentLevelIndex != PHASE_THREE_INDEX || stealthState != StealthState.SNEAKING) {
+            return;
+        }
+
+        AABB playerBounds = player.getBounds();
+        for (MemoryKey memoryKey : memoryKeys) {
+            if (!playerBounds.intersects(memoryKey.getBounds()) || !memoryKey.collect()) {
+                continue;
+            }
+
+            memorySequence = new ArrowSequence(
+                    List.of(
+                            ArrowSequence.Direction.UP,
+                            ArrowSequence.Direction.RIGHT,
+                            ArrowSequence.Direction.RIGHT,
+                            ArrowSequence.Direction.DOWN,
+                            ArrowSequence.Direction.LEFT
+                    ),
+                    6.0
+            );
+            gameState = GameState.MEMORY_SEQUENCE;
+            return;
+        }
+    }
+
+    private void updateStealthEncounter(double deltaSeconds) {
+        if (currentLevelIndex != PHASE_THREE_INDEX) {
+            return;
+        }
+
+        if (stealthState == StealthState.SNEAKING) {
+            for (ForestWatcher forestWatcher : forestWatchers) {
+                if (forestWatcher.canSee(player)) {
+                    startForestReaction();
+                    return;
+                }
+            }
+            return;
+        }
+
+        if (stealthState != StealthState.ESCAPE) {
+            return;
+        }
+
+        forestReactionRemainingSeconds = Math.max(0.0, forestReactionRemainingSeconds - deltaSeconds);
+        if (forestReactionRemainingSeconds > 0.0) {
+            return;
+        }
+
+        for (Gate gate : gates) {
+            gate.close();
+        }
+        loadLevel(currentLevelIndex);
+        gameState = GameState.GAME_OVER;
+    }
+
+    private void updateMemorySequence(double deltaSeconds, InputFrame inputFrame) {
+        if (memorySequence == null) {
+            gameState = GameState.PLAYING;
+            return;
+        }
+
+        memorySequence.fixedUpdate(deltaSeconds);
+        ArrowSequence.Direction direction = resolveSequenceDirection(inputFrame);
+        if (direction != null) {
+            memorySequence.submit(direction);
+        }
+
+        if (memorySequence.getStatus() == ArrowSequence.Status.COMPLETED) {
+            completeStealthEncounter();
+            memorySequence = null;
+            gameState = GameState.PLAYING;
+            return;
+        }
+
+        if (memorySequence.getStatus() == ArrowSequence.Status.FAILED) {
+            memorySequence = null;
+            startForestReaction();
+            gameState = GameState.PLAYING;
+        }
+    }
+
+    private void startForestReaction() {
+        if (stealthState != StealthState.SNEAKING) {
+            return;
+        }
+
+        stealthState = StealthState.ESCAPE;
+        forestReactionRemainingSeconds = FOREST_REACTION_DURATION;
+        for (Gate gate : gates) {
+            gate.open();
+        }
+        spawnForestReinforcements();
+        camera.shake(14.0, 0.34);
+    }
+
+    private void completeStealthEncounter() {
+        stealthState = StealthState.COMPLETE;
+        for (Gate gate : gates) {
+            gate.open();
+        }
+
+        for (int index = 0; index < 18; index++) {
+            addParticle(new Particle(
+                    player.getX() + player.getWidth() * 0.5,
+                    player.getY() + player.getHeight() * 0.5,
+                    ThreadLocalRandom.current().nextDouble(-150.0, 150.0),
+                    ThreadLocalRandom.current().nextDouble(-170.0, -30.0),
+                    ThreadLocalRandom.current().nextDouble(0.30, 0.65),
+                    new Color(155, 226, 255),
+                    ThreadLocalRandom.current().nextInt(3, 7)
+            ));
+        }
+    }
+
+    private void spawnForestReinforcements() {
+        double enemyWidth = TILE_SIZE * 0.6875;
+        double enemyHeight = TILE_SIZE * 0.8125;
+        double floorY = physicsWorld.getFloorY();
+        double[] spawnPositions = {
+                Math.max(0.0, player.getX() - TILE_SIZE * 3.0),
+                Math.min(worldWidth - enemyWidth, player.getX() + TILE_SIZE * 4.0)
+        };
+
+        for (int index = 0; index < spawnPositions.length; index++) {
+            enemies.add(new PatrolEnemy(
+                    spawnPositions[index],
+                    floorY - enemyHeight,
+                    enemyWidth,
+                    enemyHeight,
+                    2,
+                    index == 0 ? 1 : -1
+            ));
+        }
+    }
+
+    private ArrowSequence.Direction resolveSequenceDirection(InputFrame inputFrame) {
+        if (inputFrame.movingUpJustPressed()) {
+            return ArrowSequence.Direction.UP;
+        }
+        if (inputFrame.movingRightJustPressed()) {
+            return ArrowSequence.Direction.RIGHT;
+        }
+        if (inputFrame.movingDownJustPressed()) {
+            return ArrowSequence.Direction.DOWN;
+        }
+        if (inputFrame.movingLeftJustPressed()) {
+            return ArrowSequence.Direction.LEFT;
+        }
+        return null;
+    }
+
+    private void updateRunePuzzle(InputFrame inputFrame) {
+        if (activeRuneConsole == null || activeRuneConsole.isSolved()) {
+            activeRuneConsole = null;
+            gameState = GameState.PLAYING;
+            return;
+        }
+
+        if (inputFrame.movingLeftJustPressed()) {
+            activeRuneConsole.moveSelection(-1);
+        } else if (inputFrame.movingRightJustPressed()) {
+            activeRuneConsole.moveSelection(1);
+        }
+
+        boolean interactPressed = inputManager.isInteracting();
+        if (interactPressed && !wasInteractPressed) {
+            RuneConsole.SubmissionResult result = activeRuneConsole.submitSelectedRune();
+            if (result == RuneConsole.SubmissionResult.SOLVED) {
+                activeRuneConsole = null;
+                gameState = GameState.PLAYING;
+            } else if (result == RuneConsole.SubmissionResult.INCORRECT) {
+                camera.shake(7.0, 0.12);
+            }
+        }
+        wasInteractPressed = interactPressed;
+    }
+
+    private void beginCollapse() {
+        if (currentLevelIndex != FINAL_LEVEL_INDEX || gameState != GameState.PLAYING) {
+            return;
+        }
+
+        bossProjectiles.clear();
+        corruptionZones.clear();
+        magicProjectiles.clear();
+        collapseElapsedSeconds = 0.0;
+        collapsePhase = CollapsePhase.CORRUPTION;
+        gameState = GameState.COLLAPSE;
+        camera.shake(16.0, 0.50);
+    }
+
+    private void updateCollapse(double deltaSeconds) {
+        collapseElapsedSeconds += deltaSeconds;
+        if (collapseElapsedSeconds < 2.2) {
+            collapsePhase = CollapsePhase.CORRUPTION;
+            player.fixedUpdateCinematic(deltaSeconds, 72.0);
+            physicsWorld.resolve(player);
+        } else if (collapseElapsedSeconds < 3.6) {
+            collapsePhase = CollapsePhase.FALL;
+            player.fixedUpdateCinematic(deltaSeconds, 0.0);
+            physicsWorld.resolve(player);
+        } else if (collapseElapsedSeconds < 5.4) {
+            collapsePhase = CollapsePhase.KNIGHT_ARRIVAL;
+        } else if (collapseElapsedSeconds < 6.5) {
+            collapsePhase = CollapsePhase.STRIKE;
+            camera.shake(8.0, 0.10);
+        } else {
+            collapsePhase = CollapsePhase.DAWN;
+        }
+
+        updateParticles(deltaSeconds);
+        camera.update(player, deltaSeconds);
+        if (collapseElapsedSeconds < 8.8) {
+            return;
+        }
+
+        letterUnlocked = true;
+        replayingLetter = false;
+        endingElapsedSeconds = 0.0;
+        gameState = GameState.ENDING;
+    }
+
+    private InputFrame pollInputFrame() {
+        boolean movingLeft = inputManager.isMovingLeft();
+        boolean movingRight = inputManager.isMovingRight();
+        boolean movingUp = inputManager.isMovingUp();
+        boolean movingDown = inputManager.isMovingDown();
+        boolean confirmPressed = inputManager.isConfirmPressed();
+        InputFrame inputFrame = new InputFrame(
+                movingLeft && !wasMovingLeftPressed,
+                movingRight && !wasMovingRightPressed,
+                movingUp && !wasMovingUpPressed,
+                movingDown && !wasMovingDownPressed,
+                confirmPressed && !wasConfirmPressed
+        );
+
+        wasMovingLeftPressed = movingLeft;
+        wasMovingRightPressed = movingRight;
+        wasMovingUpPressed = movingUp;
+        wasMovingDownPressed = movingDown;
+        wasConfirmPressed = confirmPressed;
+        return inputFrame;
+    }
+
+    private void updateParticles(double deltaSeconds) {
+        Iterator<Particle> iterator = particles.iterator();
+        while (iterator.hasNext()) {
+            Particle particle = iterator.next();
+            particle.fixedUpdate(deltaSeconds);
+            if (!particle.isAlive()) {
+                iterator.remove();
+            }
+        }
+    }
+
+    private boolean damagePlayer(int amount) {
+        int healthBeforeDamage = player.getCurrentHealth();
+        player.takeDamage(amount);
+        if (player.getCurrentHealth() < healthBeforeDamage) {
+            camera.shake(9.0, 0.16);
+            return true;
+        }
+        return false;
+    }
+
+    private void damageEnemy(Enemy enemy, int amount) {
+        int healthBeforeDamage = enemy.getCurrentHealth();
+        enemy.takeDamage(amount);
+        if (enemy.getCurrentHealth() == healthBeforeDamage) {
+            return;
+        }
+
+        spawnHitSparks(enemy);
+        if (enemy instanceof BossEnemy bossEnemy) {
+            camera.shake(12.0, 0.22);
+            if (bossEnemy.isDead()) {
+                beginCollapse();
+            }
+        }
+    }
+
+    private void spawnLandingDust() {
+        double originX = player.getX() + player.getWidth() * 0.5;
+        double originY = player.getY() + player.getHeight();
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        for (int index = 0; index < 8; index++) {
+            addParticle(new Particle(
+                    originX + random.nextDouble(-14.0, 14.0),
+                    originY,
+                    random.nextDouble(-95.0, 95.0),
+                    random.nextDouble(-105.0, -35.0),
+                    random.nextDouble(0.28, 0.52),
+                    new Color(192, 164, 122),
+                    random.nextInt(3, 7)
+            ));
+        }
+    }
+
+    private void spawnHitSparks(Enemy enemy) {
+        double originX = enemy.getX() + enemy.getWidth() * 0.5;
+        double originY = enemy.getY() + enemy.getHeight() * 0.5;
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        for (int index = 0; index < 7; index++) {
+            addParticle(new Particle(
+                    originX,
+                    originY,
+                    random.nextDouble(-175.0, 175.0),
+                    random.nextDouble(-175.0, 175.0),
+                    random.nextDouble(0.16, 0.34),
+                    new Color(255, 224, 121),
+                    random.nextInt(3, 6)
+            ));
+        }
+    }
+
+    private void addParticle(Particle particle) {
+        if (particles.size() == MAX_PARTICLES) {
+            particles.remove(0);
+        }
+        particles.add(particle);
+    }
+
     private void handleLevelTransition() {
+        if (currentLevelIndex == 0 && !isRunePuzzleSolved()) {
+            return;
+        }
+        if (currentLevelIndex == PHASE_THREE_INDEX && stealthState == StealthState.SNEAKING) {
+            return;
+        }
+        if (currentLevelIndex == FINAL_LEVEL_INDEX && hasLivingBoss()) {
+            return;
+        }
+
         AABB playerBounds = player.getBounds();
         for (LevelExit levelExit : levelExits) {
             if (!playerBounds.intersects(levelExit.getBounds())) {
@@ -582,11 +1556,33 @@ public final class GamePanel extends JPanel {
     private void transitionToNextLevel() {
         int nextLevelIndex = currentLevelIndex + 1;
         if (nextLevelIndex >= ALL_LEVELS.size()) {
-            gameState = GameState.ENDING;
+            beginCollapse();
             return;
         }
 
         loadLevel(nextLevelIndex);
+    }
+
+    private boolean hasLivingBoss() {
+        for (Enemy enemy : enemies) {
+            if (enemy instanceof BossEnemy && !enemy.isDead()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isRunePuzzleSolved() {
+        if (runeConsoles.isEmpty()) {
+            return true;
+        }
+
+        for (RuneConsole runeConsole : runeConsoles) {
+            if (!runeConsole.isSolved()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void handleInteraction() {
@@ -602,7 +1598,19 @@ public final class GamePanel extends JPanel {
                 continue;
             }
 
-            if (interactable instanceof DialogInteractable dialogInteractable) {
+            if (interactable instanceof RuneSymbol runeSymbol) {
+                observedRunes.add(runeSymbol.getRune());
+                dialogManager.open(runeSymbol.getDialogMessage());
+                gameState = GameState.DIALOGUE;
+            } else if (interactable instanceof RuneConsole runeConsole) {
+                if (observedRunes.size() < runeSymbols.size()) {
+                    dialogManager.open("As imagens espalhadas pela floresta ainda escondem parte da sequencia.");
+                    gameState = GameState.DIALOGUE;
+                } else {
+                    activeRuneConsole = runeConsole;
+                    gameState = GameState.RUNE_PUZZLE;
+                }
+            } else if (interactable instanceof DialogInteractable dialogInteractable) {
                 dialogManager.open(dialogInteractable.getDialogMessage());
                 gameState = GameState.DIALOGUE;
             } else {
@@ -647,5 +1655,29 @@ public final class GamePanel extends JPanel {
         }
 
         return maxColumns;
+    }
+
+    private enum StealthState {
+        INACTIVE,
+        SNEAKING,
+        ESCAPE,
+        COMPLETE
+    }
+
+    private enum CollapsePhase {
+        CORRUPTION,
+        FALL,
+        KNIGHT_ARRIVAL,
+        STRIKE,
+        DAWN
+    }
+
+    private record InputFrame(
+            boolean movingLeftJustPressed,
+            boolean movingRightJustPressed,
+            boolean movingUpJustPressed,
+            boolean movingDownJustPressed,
+            boolean confirmJustPressed
+    ) {
     }
 }

@@ -2,15 +2,22 @@ package level;
 
 import entities.Enemy;
 import entities.BossEnemy;
+import entities.Collectible;
 import entities.FlyingEnemy;
+import entities.ForestWatcher;
 import entities.Gate;
 import entities.Interactable;
 import entities.Lever;
 import entities.LevelExit;
 import entities.ManaPickup;
+import entities.MemoryKey;
 import entities.MysteriousKnight;
 import entities.PatrolEnemy;
 import entities.Platform;
+import entities.PotionPickup;
+import entities.PotionType;
+import entities.RuneConsole;
+import entities.RuneSymbol;
 import entities.Signpost;
 import entities.Spike;
 
@@ -37,12 +44,20 @@ public final class LevelParser {
     private static final double SIGNPOST_HEIGHT_RATIO = 0.75;
     private static final double KNIGHT_WIDTH_RATIO = 0.70;
     private static final double KNIGHT_HEIGHT_RATIO = 1.0;
+    private static final double RUNE_SYMBOL_SIZE_RATIO = 0.58;
+    private static final double RUNE_CONSOLE_WIDTH_RATIO = 0.70;
+    private static final double RUNE_CONSOLE_HEIGHT_RATIO = 0.70;
+    private static final double WATCHER_WIDTH_RATIO = 0.70;
+    private static final double WATCHER_HEIGHT_RATIO = 0.90;
+    private static final double MEMORY_KEY_SIZE_RATIO = 0.50;
+    private static final double POTION_SIZE_RATIO = 0.48;
+    private static final double COLLECTIBLE_SIZE_RATIO = 0.38;
     private static final int ENEMY_HEALTH = 2;
     private static final int FLYING_ENEMY_HEALTH = 2;
     private static final int BOSS_HEALTH = 10;
     private static final int MANA_RESTORE_AMOUNT = 50;
     private static final String SIGNPOST_MESSAGE = "Pressione E perto de alavancas, placas e viajantes.";
-    private static final String KNIGHT_MESSAGE = "O amanhecer nao e um destino. E uma escolha.";
+    private static final String KNIGHT_MESSAGE = "Nao deixe os guardas verem voce. Corra apenas se a floresta acordar.";
 
     private LevelParser() {
     }
@@ -64,8 +79,13 @@ public final class LevelParser {
         List<LevelExit> exits = new ArrayList<>();
         List<ManaPickup> manaPickups = new ArrayList<>();
         List<Interactable> interactables = new ArrayList<>();
+        List<MemoryKey> memoryKeys = new ArrayList<>();
+        List<ForestWatcher> forestWatchers = new ArrayList<>();
+        List<PotionPickup> potionPickups = new ArrayList<>();
+        List<Collectible> collectibles = new ArrayList<>();
         List<GridPosition> gatePositions = new ArrayList<>();
         List<GridPosition> leverPositions = new ArrayList<>();
+        List<GridPosition> runeConsolePositions = new ArrayList<>();
 
         double playerStartX = Double.NaN;
         double playerStartY = Double.NaN;
@@ -112,6 +132,36 @@ public final class LevelParser {
                     case 'S':
                         interactables.add(createSignpost(tileX, tileY, tileSize));
                         break;
+                    case '1':
+                        interactables.add(createRuneSymbol(tileX, tileY, tileSize, RuneSymbol.Rune.MOON, 1));
+                        break;
+                    case '2':
+                        interactables.add(createRuneSymbol(tileX, tileY, tileSize, RuneSymbol.Rune.LEAF, 2));
+                        break;
+                    case '3':
+                        interactables.add(createRuneSymbol(tileX, tileY, tileSize, RuneSymbol.Rune.SUN, 3));
+                        break;
+                    case 'R':
+                        runeConsolePositions.add(new GridPosition(col, row));
+                        break;
+                    case 'W':
+                        forestWatchers.add(createForestWatcher(tileX, tileY, tileSize, -1));
+                        break;
+                    case 'w':
+                        forestWatchers.add(createForestWatcher(tileX, tileY, tileSize, 1));
+                        break;
+                    case 'K':
+                        memoryKeys.add(createMemoryKey(tileX, tileY, tileSize));
+                        break;
+                    case 'H':
+                        potionPickups.add(createPotionPickup(tileX, tileY, tileSize, PotionType.HEALTH));
+                        break;
+                    case 'O':
+                        potionPickups.add(createPotionPickup(tileX, tileY, tileSize, PotionType.MANA));
+                        break;
+                    case 'C':
+                        collectibles.add(createCollectible(tileX, tileY, tileSize));
+                        break;
                     case 'P':
                         playerStartX = tileX + ((tileSize - (tileSize * PLAYER_WIDTH_RATIO)) * 0.5);
                         playerStartY = tileY + (tileSize - (tileSize * PLAYER_HEIGHT_RATIO));
@@ -128,6 +178,9 @@ public final class LevelParser {
         if (!leverPositions.isEmpty() && gatePositions.isEmpty()) {
             throw new IllegalArgumentException("Map contains a lever but no gate.");
         }
+        if (!runeConsolePositions.isEmpty() && gatePositions.isEmpty()) {
+            throw new IllegalArgumentException("Map contains a rune console but no gate.");
+        }
 
         for (GridPosition gatePosition : gatePositions) {
             gates.add(createGate(gatePosition, tileSize));
@@ -139,7 +192,27 @@ public final class LevelParser {
             interactables.add(createLever(leverPosition, tileSize, targetGate));
         }
 
-        return new Level(platforms, spikes, enemies, gates, exits, manaPickups, interactables, playerStartX, playerStartY);
+        for (int index = 0; index < runeConsolePositions.size(); index++) {
+            GridPosition consolePosition = runeConsolePositions.get(index);
+            Gate targetGate = gates.get(Math.min(index, gates.size() - 1));
+            interactables.add(createRuneConsole(consolePosition, tileSize, targetGate));
+        }
+
+        return new Level(
+                platforms,
+                spikes,
+                enemies,
+                gates,
+                exits,
+                manaPickups,
+                interactables,
+                memoryKeys,
+                forestWatchers,
+                potionPickups,
+                collectibles,
+                playerStartX,
+                playerStartY
+        );
     }
 
     private static Spike createSpike(double tileX, double tileY, int tileSize) {
@@ -193,6 +266,63 @@ public final class LevelParser {
         double knightX = tileX + ((tileSize - knightWidth) * 0.5);
         double knightY = tileY + tileSize - knightHeight;
         return new MysteriousKnight(knightX, knightY, knightWidth, knightHeight, KNIGHT_MESSAGE);
+    }
+
+    private static RuneSymbol createRuneSymbol(
+            double tileX,
+            double tileY,
+            int tileSize,
+            RuneSymbol.Rune rune,
+            int order
+    ) {
+        double symbolSize = tileSize * RUNE_SYMBOL_SIZE_RATIO;
+        double symbolX = tileX + (tileSize - symbolSize) * 0.5;
+        double symbolY = tileY + (tileSize - symbolSize) * 0.5;
+        return new RuneSymbol(symbolX, symbolY, symbolSize, symbolSize, rune, order);
+    }
+
+    private static RuneConsole createRuneConsole(GridPosition consolePosition, int tileSize, Gate targetGate) {
+        double consoleWidth = tileSize * RUNE_CONSOLE_WIDTH_RATIO;
+        double consoleHeight = tileSize * RUNE_CONSOLE_HEIGHT_RATIO;
+        double consoleX = (consolePosition.column * (double) tileSize) + (tileSize - consoleWidth) * 0.5;
+        double consoleY = ((consolePosition.row + 1) * (double) tileSize) - consoleHeight;
+        return new RuneConsole(
+                consoleX,
+                consoleY,
+                consoleWidth,
+                consoleHeight,
+                targetGate,
+                List.of(RuneSymbol.Rune.MOON, RuneSymbol.Rune.LEAF, RuneSymbol.Rune.SUN)
+        );
+    }
+
+    private static ForestWatcher createForestWatcher(double tileX, double tileY, int tileSize, int direction) {
+        double watcherWidth = tileSize * WATCHER_WIDTH_RATIO;
+        double watcherHeight = tileSize * WATCHER_HEIGHT_RATIO;
+        double watcherX = tileX + (tileSize - watcherWidth) * 0.5;
+        double watcherY = tileY + tileSize - watcherHeight;
+        return new ForestWatcher(watcherX, watcherY, watcherWidth, watcherHeight, direction);
+    }
+
+    private static MemoryKey createMemoryKey(double tileX, double tileY, int tileSize) {
+        double keySize = tileSize * MEMORY_KEY_SIZE_RATIO;
+        double keyX = tileX + (tileSize - keySize) * 0.5;
+        double keyY = tileY + (tileSize - keySize) * 0.5;
+        return new MemoryKey(keyX, keyY, keySize, keySize);
+    }
+
+    private static PotionPickup createPotionPickup(double tileX, double tileY, int tileSize, PotionType type) {
+        double potionSize = tileSize * POTION_SIZE_RATIO;
+        double potionX = tileX + (tileSize - potionSize) * 0.5;
+        double potionY = tileY + tileSize - potionSize;
+        return new PotionPickup(potionX, potionY, potionSize, potionSize, type);
+    }
+
+    private static Collectible createCollectible(double tileX, double tileY, int tileSize) {
+        double collectibleSize = tileSize * COLLECTIBLE_SIZE_RATIO;
+        double collectibleX = tileX + (tileSize - collectibleSize) * 0.5;
+        double collectibleY = tileY + (tileSize - collectibleSize) * 0.5;
+        return new Collectible(collectibleX, collectibleY, collectibleSize, collectibleSize);
     }
 
     private static Signpost createSignpost(double tileX, double tileY, int tileSize) {

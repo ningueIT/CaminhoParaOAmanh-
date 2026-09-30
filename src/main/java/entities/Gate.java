@@ -31,6 +31,10 @@ public final class Gate {
         open = true;
     }
 
+    public void close() {
+        open = false;
+    }
+
     public void render(Graphics2D g2d) {
         if (open) {
             return;
