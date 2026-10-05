@@ -43,6 +43,14 @@ public final class MagicProjectile {
         return damage;
     }
 
+    public double getCenterX() {
+        return x + WIDTH * 0.5;
+    }
+
+    public double getCenterY() {
+        return y + HEIGHT * 0.5;
+    }
+
     public boolean isActive() {
         return active;
     }

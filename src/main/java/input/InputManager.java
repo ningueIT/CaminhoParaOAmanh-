@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class InputManager implements KeyListener, MouseListener, MouseMotionListener {
     private final Set<Integer> pressedKeys = ConcurrentHashMap.newKeySet();
     private volatile boolean primaryAttackPressed;
+    private volatile boolean leftMousePressed;
     private volatile boolean mousePositionKnown;
     private volatile int mouseX;
     private volatile int mouseY;
@@ -53,6 +54,22 @@ public final class InputManager implements KeyListener, MouseListener, MouseMoti
 
     public boolean isConfirmPressed() {
         return pressedKeys.contains(KeyEvent.VK_ENTER);
+    }
+
+    public boolean isEscapePressed() {
+        return pressedKeys.contains(KeyEvent.VK_ESCAPE);
+    }
+
+    public boolean isTabPressed() {
+        return pressedKeys.contains(KeyEvent.VK_TAB);
+    }
+
+    public boolean isFullScreenTogglePressed() {
+        return pressedKeys.contains(KeyEvent.VK_F11);
+    }
+
+    public boolean isLeftMousePressed() {
+        return leftMousePressed;
     }
 
     public boolean isUseHealthPotionPressed() {
@@ -98,6 +115,7 @@ public final class InputManager implements KeyListener, MouseListener, MouseMoti
         updateMousePosition(event);
         if (event.getButton() == MouseEvent.BUTTON1) {
             primaryAttackPressed = true;
+            leftMousePressed = true;
         }
     }
 
@@ -106,6 +124,7 @@ public final class InputManager implements KeyListener, MouseListener, MouseMoti
         updateMousePosition(event);
         if (event.getButton() == MouseEvent.BUTTON1) {
             primaryAttackPressed = false;
+            leftMousePressed = false;
         }
     }
 

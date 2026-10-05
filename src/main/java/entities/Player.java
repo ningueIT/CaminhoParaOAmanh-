@@ -5,10 +5,15 @@ import engine.AssetManager;
 import input.InputManager;
 import physics.AABB;
 
+import java.awt.AlphaComposite;
 import java.awt.Color;
+import java.awt.Composite;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.EnumMap;
+import java.util.Iterator;
 import java.util.Map;
 
 public final class Player extends Entity {
@@ -41,6 +46,11 @@ public final class Player extends Entity {
     private static final double INVULNERABILITY_DURATION = 1.5;
     private static final double BLINK_FREQUENCY = 12.0;
     private static final int MAX_AIR_JUMPS = 1;
+    private static final double COYOTE_TIME_SECONDS = 0.12;
+    private static final double JUMP_BUFFER_SECONDS = 0.12;
+    private static final double DASH_AFTERIMAGE_INTERVAL_SECONDS = 0.045;
+    private static final double DASH_AFTERIMAGE_LIFETIME_SECONDS = 0.20;
+    private static final int MAX_DASH_AFTERIMAGES = 4;
     private static final String PLAYER_SPRITE_DIRECTORY = "sprites/player/";
 
     private final int maxHealth;
@@ -57,6 +67,9 @@ public final class Player extends Entity {
     private double dashTimer;
     private double dashCooldownTimer;
     private double invulnerabilityTimer;
+    private double coyoteTimer;
+    private double jumpBufferTimer;
+    private double dashAfterimageTimer;
     private int facingDirection = 1;
     private int dashDirection = 1;
     private AttackDirection aimDirection = AttackDirection.RIGHT;
@@ -65,6 +78,7 @@ public final class Player extends Entity {
     private int healthPotionCount;
     private int manaPotionCount;
     private int collectibleCount;
+    private final Deque<DashAfterimage> dashAfterimages = new ArrayDeque<>();
     private boolean wasAttackPressed;
     private boolean wasDashPressed;
     private boolean wasMagicPressed;
@@ -97,6 +111,7 @@ public final class Player extends Entity {
         updateAttackCooldown(deltaSeconds);
         updateMagicCooldown(deltaSeconds);
         updateDashCooldown(deltaSeconds);
+        updateJumpGraceTimers(inputManager, deltaSeconds);
         handlePotionTriggers(inputManager);
         handleAttackTrigger(inputManager);
         handleMagicTrigger(inputManager);
@@ -110,10 +125,11 @@ public final class Player extends Entity {
             attackEndedThisFrame = updateAttack(deltaSeconds);
         } else {
             updateHorizontalMovement(inputManager, deltaSeconds);
-            updateVerticalMovement(inputManager, deltaSeconds);
+            updateVerticalMovement(deltaSeconds);
         }
 
         integrate(deltaSeconds);
+        updateDashAfterimages(deltaSeconds);
 
         if (attackEndedThisFrame) {
             finishAttack();
@@ -241,6 +257,18 @@ public final class Player extends Entity {
         return availableAirJumps;
     }
 
+    public double getCoyoteTimeRemaining() {
+        return coyoteTimer;
+    }
+
+    public double getJumpBufferTimeRemaining() {
+        return jumpBufferTimer;
+    }
+
+    public int getDashAfterimageCount() {
+        return dashAfterimages.size();
+    }
+
     public void resetJourneyInventory() {
         healthPotionCount = 0;
         manaPotionCount = 0;
@@ -351,6 +379,10 @@ public final class Player extends Entity {
         wasHealthPotionPressed = false;
         wasManaPotionPressed = false;
         availableAirJumps = MAX_AIR_JUMPS;
+        coyoteTimer = 0.0;
+        jumpBufferTimer = 0.0;
+        dashAfterimageTimer = 0.0;
+        dashAfterimages.clear();
         jumpSoundRequested = false;
         damageSoundRequested = false;
         pendingMagicProjectile = null;
@@ -372,6 +404,8 @@ public final class Player extends Entity {
         setVelocityY(-ENEMY_BOUNCE_SPEED);
         setOnGround(false);
         availableAirJumps = MAX_AIR_JUMPS;
+        coyoteTimer = 0.0;
+        jumpBufferTimer = 0.0;
         setState(PlayerState.JUMPING);
     }
 
@@ -409,6 +443,7 @@ public final class Player extends Entity {
 
     @Override
     public void render(Graphics2D g2d, double alpha) {
+        drawDashAfterimages(g2d);
         if (isAttacking()) {
             drawAttackHitbox(g2d, createAttackHitbox(getRenderX(alpha), getRenderY(alpha)));
         }
@@ -440,6 +475,21 @@ public final class Player extends Entity {
 
     private void updateDashCooldown(double deltaSeconds) {
         dashCooldownTimer = Math.max(0.0, dashCooldownTimer - deltaSeconds);
+    }
+
+    private void updateJumpGraceTimers(InputManager inputManager, double deltaSeconds) {
+        if (isOnGround()) {
+            coyoteTimer = COYOTE_TIME_SECONDS;
+            availableAirJumps = MAX_AIR_JUMPS;
+        } else {
+            coyoteTimer = Math.max(0.0, coyoteTimer - deltaSeconds);
+        }
+
+        if (inputManager.isJumpPressed() && !wasJumpPressed) {
+            jumpBufferTimer = JUMP_BUFFER_SECONDS;
+        } else {
+            jumpBufferTimer = Math.max(0.0, jumpBufferTimer - deltaSeconds);
+        }
     }
 
     private void handleAttackTrigger(InputManager inputManager) {
@@ -498,6 +548,7 @@ public final class Player extends Entity {
         facingDirection = dashDirection;
         dashTimer = DASH_DURATION;
         dashCooldownTimer = DASH_COOLDOWN;
+        dashAfterimageTimer = 0.0;
         setState(PlayerState.DODGING);
 
         setVelocityX(dashDirection * DASH_SPEED);
@@ -561,22 +612,91 @@ public final class Player extends Entity {
         setVelocityX(moveTowards(getVelocityX(), targetVelocityX, acceleration * deltaSeconds));
     }
 
-    private void updateVerticalMovement(InputManager inputManager, double deltaSeconds) {
-        boolean jumpPressed = inputManager.isJumpPressed();
-        if (isOnGround()) {
-            availableAirJumps = MAX_AIR_JUMPS;
-        }
-
-        if (jumpPressed && !wasJumpPressed && (isOnGround() || availableAirJumps > 0)) {
-            setVelocityY(-JUMP_SPEED);
-            if (!isOnGround()) {
-                availableAirJumps--;
-            }
-            setOnGround(false);
-            jumpSoundRequested = true;
-        }
-
+    private void updateVerticalMovement(double deltaSeconds) {
+        tryConsumeBufferedJump();
         setVelocityY(getVelocityY() + GRAVITY * deltaSeconds);
+    }
+
+    private void tryConsumeBufferedJump() {
+        if (jumpBufferTimer == 0.0) {
+            return;
+        }
+
+        if (isOnGround() || coyoteTimer > 0.0) {
+            availableAirJumps = MAX_AIR_JUMPS;
+            performJump();
+            return;
+        }
+
+        if (availableAirJumps <= 0) {
+            return;
+        }
+
+        availableAirJumps--;
+        performJump();
+    }
+
+    private void performJump() {
+        setVelocityY(-JUMP_SPEED);
+        setOnGround(false);
+        coyoteTimer = 0.0;
+        jumpBufferTimer = 0.0;
+        jumpSoundRequested = true;
+    }
+
+    private void updateDashAfterimages(double deltaSeconds) {
+        Iterator<DashAfterimage> iterator = dashAfterimages.iterator();
+        while (iterator.hasNext()) {
+            DashAfterimage afterimage = iterator.next();
+            afterimage.remainingSeconds = Math.max(0.0, afterimage.remainingSeconds - deltaSeconds);
+            if (afterimage.remainingSeconds == 0.0) {
+                iterator.remove();
+            }
+        }
+
+        if (state != PlayerState.DODGING) {
+            return;
+        }
+
+        dashAfterimageTimer = Math.max(0.0, dashAfterimageTimer - deltaSeconds);
+        if (dashAfterimageTimer > 0.0) {
+            return;
+        }
+
+        if (dashAfterimages.size() == MAX_DASH_AFTERIMAGES) {
+            dashAfterimages.removeFirst();
+        }
+        dashAfterimages.addLast(new DashAfterimage(
+                getX(),
+                getY(),
+                getCurrentAnimation().getCurrentFrame(),
+                DASH_AFTERIMAGE_LIFETIME_SECONDS
+        ));
+        dashAfterimageTimer = DASH_AFTERIMAGE_INTERVAL_SECONDS;
+    }
+
+    private void drawDashAfterimages(Graphics2D g2d) {
+        if (dashAfterimages.isEmpty()) {
+            return;
+        }
+
+        Composite previousComposite = g2d.getComposite();
+        try {
+            for (DashAfterimage afterimage : dashAfterimages) {
+                float opacity = (float) (0.45 * (afterimage.remainingSeconds / DASH_AFTERIMAGE_LIFETIME_SECONDS));
+                g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, opacity));
+                g2d.drawImage(
+                        afterimage.frame,
+                        (int) Math.round(afterimage.x),
+                        (int) Math.round(afterimage.y),
+                        (int) Math.round(getWidth()),
+                        (int) Math.round(getHeight()),
+                        null
+                );
+            }
+        } finally {
+            g2d.setComposite(previousComposite);
+        }
     }
 
     private double moveTowards(double current, double target, double maxDelta) {
@@ -717,5 +837,19 @@ public final class Player extends Entity {
 
         g2d.setColor(new Color(255, 255, 255));
         g2d.drawRoundRect(renderX, renderY, renderWidth, renderHeight, 8, 8);
+    }
+
+    private static final class DashAfterimage {
+        private final double x;
+        private final double y;
+        private final BufferedImage frame;
+        private double remainingSeconds;
+
+        private DashAfterimage(double x, double y, BufferedImage frame, double remainingSeconds) {
+            this.x = x;
+            this.y = y;
+            this.frame = frame;
+            this.remainingSeconds = remainingSeconds;
+        }
     }
 }

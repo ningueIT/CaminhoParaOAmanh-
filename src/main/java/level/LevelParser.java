@@ -2,12 +2,14 @@ package level;
 
 import entities.Enemy;
 import entities.BossEnemy;
+import entities.BrambleBarrier;
 import entities.Collectible;
 import entities.FlyingEnemy;
 import entities.ForestWatcher;
 import entities.Gate;
 import entities.Interactable;
 import entities.Lever;
+import entities.LightBeacon;
 import entities.LevelExit;
 import entities.ManaPickup;
 import entities.MemoryKey;
@@ -52,6 +54,10 @@ public final class LevelParser {
     private static final double MEMORY_KEY_SIZE_RATIO = 0.50;
     private static final double POTION_SIZE_RATIO = 0.48;
     private static final double COLLECTIBLE_SIZE_RATIO = 0.38;
+    private static final double LIGHT_BEACON_WIDTH_RATIO = 0.72;
+    private static final double LIGHT_BEACON_HEIGHT_RATIO = 1.20;
+    private static final double BRAMBLE_WIDTH_RATIO = 0.72;
+    private static final double BRAMBLE_HEIGHT_RATIO = 5.50;
     private static final int ENEMY_HEALTH = 2;
     private static final int FLYING_ENEMY_HEALTH = 2;
     private static final int BOSS_HEALTH = 10;
@@ -83,6 +89,8 @@ public final class LevelParser {
         List<ForestWatcher> forestWatchers = new ArrayList<>();
         List<PotionPickup> potionPickups = new ArrayList<>();
         List<Collectible> collectibles = new ArrayList<>();
+        List<LightBeacon> lightBeacons = new ArrayList<>();
+        List<BrambleBarrier> brambleBarriers = new ArrayList<>();
         List<GridPosition> gatePositions = new ArrayList<>();
         List<GridPosition> leverPositions = new ArrayList<>();
         List<GridPosition> runeConsolePositions = new ArrayList<>();
@@ -162,6 +170,12 @@ public final class LevelParser {
                     case 'C':
                         collectibles.add(createCollectible(tileX, tileY, tileSize));
                         break;
+                    case 'A':
+                        lightBeacons.add(createLightBeacon(tileX, tileY, tileSize));
+                        break;
+                    case 'Y':
+                        brambleBarriers.add(createBrambleBarrier(tileX, tileY, tileSize));
+                        break;
                     case 'P':
                         playerStartX = tileX + ((tileSize - (tileSize * PLAYER_WIDTH_RATIO)) * 0.5);
                         playerStartY = tileY + (tileSize - (tileSize * PLAYER_HEIGHT_RATIO));
@@ -210,6 +224,8 @@ public final class LevelParser {
                 forestWatchers,
                 potionPickups,
                 collectibles,
+                lightBeacons,
+                brambleBarriers,
                 playerStartX,
                 playerStartY
         );
@@ -323,6 +339,22 @@ public final class LevelParser {
         double collectibleX = tileX + (tileSize - collectibleSize) * 0.5;
         double collectibleY = tileY + (tileSize - collectibleSize) * 0.5;
         return new Collectible(collectibleX, collectibleY, collectibleSize, collectibleSize);
+    }
+
+    private static LightBeacon createLightBeacon(double tileX, double tileY, int tileSize) {
+        double beaconWidth = tileSize * LIGHT_BEACON_WIDTH_RATIO;
+        double beaconHeight = tileSize * LIGHT_BEACON_HEIGHT_RATIO;
+        double beaconX = tileX + (tileSize - beaconWidth) * 0.5;
+        double beaconY = tileY + tileSize - beaconHeight;
+        return new LightBeacon(beaconX, beaconY, beaconWidth, beaconHeight);
+    }
+
+    private static BrambleBarrier createBrambleBarrier(double tileX, double tileY, int tileSize) {
+        double brambleWidth = tileSize * BRAMBLE_WIDTH_RATIO;
+        double brambleHeight = tileSize * BRAMBLE_HEIGHT_RATIO;
+        double brambleX = tileX + (tileSize - brambleWidth) * 0.5;
+        double brambleY = tileY + tileSize * 2.0 - brambleHeight;
+        return new BrambleBarrier(brambleX, brambleY, brambleWidth, brambleHeight);
     }
 
     private static Signpost createSignpost(double tileX, double tileY, int tileSize) {

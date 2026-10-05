@@ -1,6 +1,7 @@
 package level;
 
 import entities.Enemy;
+import entities.BrambleBarrier;
 import entities.Collectible;
 import entities.ForestWatcher;
 import entities.Gate;
@@ -10,6 +11,7 @@ import entities.ManaPickup;
 import entities.MemoryKey;
 import entities.Platform;
 import entities.PotionPickup;
+import entities.LightBeacon;
 import entities.Spike;
 
 import java.util.List;
@@ -27,6 +29,8 @@ public final class Level {
     private final List<ForestWatcher> forestWatchers;
     private final List<PotionPickup> potionPickups;
     private final List<Collectible> collectibles;
+    private final List<LightBeacon> lightBeacons;
+    private final List<BrambleBarrier> brambleBarriers;
     private final double playerStartX;
     private final double playerStartY;
 
@@ -101,6 +105,42 @@ public final class Level {
             double playerStartX,
             double playerStartY
     ) {
+        this(
+                platforms,
+                spikes,
+                enemies,
+                gates,
+                exits,
+                manaPickups,
+                interactables,
+                memoryKeys,
+                forestWatchers,
+                potionPickups,
+                collectibles,
+                List.of(),
+                List.of(),
+                playerStartX,
+                playerStartY
+        );
+    }
+
+    public Level(
+            List<Platform> platforms,
+            List<Spike> spikes,
+            List<Enemy> enemies,
+            List<Gate> gates,
+            List<LevelExit> exits,
+            List<ManaPickup> manaPickups,
+            List<Interactable> interactables,
+            List<MemoryKey> memoryKeys,
+            List<ForestWatcher> forestWatchers,
+            List<PotionPickup> potionPickups,
+            List<Collectible> collectibles,
+            List<LightBeacon> lightBeacons,
+            List<BrambleBarrier> brambleBarriers,
+            double playerStartX,
+            double playerStartY
+    ) {
         this.platforms = List.copyOf(Objects.requireNonNull(platforms, "platforms"));
         this.spikes = List.copyOf(Objects.requireNonNull(spikes, "spikes"));
         this.enemies = List.copyOf(Objects.requireNonNull(enemies, "enemies"));
@@ -112,6 +152,8 @@ public final class Level {
         this.forestWatchers = List.copyOf(Objects.requireNonNull(forestWatchers, "forestWatchers"));
         this.potionPickups = List.copyOf(Objects.requireNonNull(potionPickups, "potionPickups"));
         this.collectibles = List.copyOf(Objects.requireNonNull(collectibles, "collectibles"));
+        this.lightBeacons = List.copyOf(Objects.requireNonNull(lightBeacons, "lightBeacons"));
+        this.brambleBarriers = List.copyOf(Objects.requireNonNull(brambleBarriers, "brambleBarriers"));
         this.playerStartX = playerStartX;
         this.playerStartY = playerStartY;
     }
@@ -158,6 +200,14 @@ public final class Level {
 
     public List<Collectible> getCollectibles() {
         return collectibles;
+    }
+
+    public List<LightBeacon> getLightBeacons() {
+        return lightBeacons;
+    }
+
+    public List<BrambleBarrier> getBrambleBarriers() {
+        return brambleBarriers;
     }
 
     public double getPlayerStartX() {

@@ -4,6 +4,7 @@ import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Clip;
+import javax.sound.sampled.FloatControl;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.UnsupportedAudioFileException;
 import java.awt.Toolkit;
@@ -22,6 +23,54 @@ public final class AudioManager {
     private final Map<String, Clip> clips = new HashMap<>();
     private Clip backgroundMusic;
     private String backgroundMusicId;
+    private float volume = 0.8f;
+
+    public float getVolume() {
+        return volume;
+    }
+
+    public int getVolumePercentage() {
+        return Math.round(volume * 100.0f);
+    }
+
+    public void setVolume(float newVolume) {
+        this.volume = Math.max(0.0f, Math.min(1.0f, newVolume));
+        if (backgroundMusic != null) {
+            applyVolumeToClip(backgroundMusic, this.volume);
+        }
+        for (Clip clip : clips.values()) {
+            applyVolumeToClip(clip, this.volume);
+        }
+    }
+
+    public void increaseVolume(float amount) {
+        setVolume(this.volume + amount);
+    }
+
+    public void decreaseVolume(float amount) {
+        setVolume(this.volume - amount);
+    }
+
+    private void applyVolumeToClip(Clip clip, float vol) {
+        if (clip == null || !clip.isOpen()) {
+            return;
+        }
+        try {
+            if (clip.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
+                FloatControl gainControl = (FloatControl) clip.getControl(FloatControl.Type.MASTER_GAIN);
+                if (vol <= 0.0001f) {
+                    gainControl.setValue(gainControl.getMinimum());
+                } else {
+                    float min = gainControl.getMinimum();
+                    float max = Math.min(gainControl.getMaximum(), 6.0f);
+                    float dB = (float) (Math.log10(vol) * 20.0);
+                    float clampedDB = Math.max(min, Math.min(max, dB));
+                    gainControl.setValue(clampedDB);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+    }
 
     // Clip mantem o som em memoria, ideal para efeitos curtos como salto e ataque.
     public void loadClip(String id, String resourcePath)
@@ -34,6 +83,7 @@ public final class AudioManager {
         try (AudioInputStream audioStream = AudioSystem.getAudioInputStream(resource)) {
             Clip clip = AudioSystem.getClip();
             clip.open(audioStream);
+            applyVolumeToClip(clip, volume);
             clips.put(id, clip);
         }
     }
@@ -94,12 +144,15 @@ public final class AudioManager {
         if (clip != null) {
             clip.stop();
             clip.setFramePosition(0);
+            applyVolumeToClip(clip, volume);
             clip.start();
             return;
         }
 
         // Mantem os eventos audiveis ate que os clips nomeados sejam carregados.
-        Toolkit.getDefaultToolkit().beep();
+        if (volume > 0.01f) {
+            Toolkit.getDefaultToolkit().beep();
+        }
     }
 
     public void closeAll() {
@@ -122,6 +175,7 @@ public final class AudioManager {
         Clip previousBackgroundMusic = backgroundMusic;
         backgroundMusic = nextBackgroundMusic;
         backgroundMusicId = id;
+        applyVolumeToClip(backgroundMusic, volume);
         backgroundMusic.loop(Clip.LOOP_CONTINUOUSLY);
 
         if (previousBackgroundMusic != null) {
@@ -163,7 +217,9 @@ public final class AudioManager {
 
     public enum SoundEffect {
         JUMP("jump"),
-        DAMAGE("damage");
+        DAMAGE("damage"),
+        AURORA("aurora"),
+        BRAMBLE("bramble");
 
         private final String clipId;
 

@@ -1,6 +1,7 @@
 package physics;
 
 import entities.Entity;
+import entities.BrambleBarrier;
 import entities.Gate;
 import entities.Platform;
 
@@ -11,16 +12,28 @@ public final class PhysicsWorld {
     private final double floorY;
     private final List<Platform> platforms;
     private final List<Gate> gates;
+    private final List<BrambleBarrier> brambleBarriers;
 
     public PhysicsWorld(double worldWidth, double floorY, List<Platform> platforms) {
-        this(worldWidth, floorY, platforms, List.of());
+        this(worldWidth, floorY, platforms, List.of(), List.of());
     }
 
     public PhysicsWorld(double worldWidth, double floorY, List<Platform> platforms, List<Gate> gates) {
+        this(worldWidth, floorY, platforms, gates, List.of());
+    }
+
+    public PhysicsWorld(
+            double worldWidth,
+            double floorY,
+            List<Platform> platforms,
+            List<Gate> gates,
+            List<BrambleBarrier> brambleBarriers
+    ) {
         this.worldWidth = worldWidth;
         this.floorY = floorY;
         this.platforms = List.copyOf(platforms);
         this.gates = List.copyOf(gates);
+        this.brambleBarriers = List.copyOf(brambleBarriers);
     }
 
     public void resolve(Entity entity) {
@@ -29,6 +42,7 @@ public final class PhysicsWorld {
         resolveFloorCollision(entity);
         resolvePlatformCollisions(entity);
         resolveGateCollisions(entity);
+        resolveBrambleCollisions(entity);
         clampHorizontalBounds(entity);
     }
 
@@ -46,6 +60,10 @@ public final class PhysicsWorld {
 
     public List<Gate> getGates() {
         return gates;
+    }
+
+    public List<BrambleBarrier> getBrambleBarriers() {
+        return brambleBarriers;
     }
 
     private void clampHorizontalBounds(Entity entity) {
@@ -97,6 +115,22 @@ public final class PhysicsWorld {
 
             // Portoes fechados compartilham a mesma resolucao AABB das plataformas.
             resolveSolidCollision(entity, entityBounds, gateBounds);
+        }
+    }
+
+    private void resolveBrambleCollisions(Entity entity) {
+        for (BrambleBarrier brambleBarrier : brambleBarriers) {
+            if (brambleBarrier.isBurned()) {
+                continue;
+            }
+
+            AABB entityBounds = entity.getBounds();
+            AABB brambleBounds = brambleBarrier.getBounds();
+            if (!entityBounds.intersects(brambleBounds)) {
+                continue;
+            }
+
+            resolveSolidCollision(entity, entityBounds, brambleBounds);
         }
     }
 

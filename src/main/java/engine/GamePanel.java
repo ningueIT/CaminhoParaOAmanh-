@@ -3,6 +3,7 @@ package engine;
 import entities.Enemy;
 import entities.BossEnemy;
 import entities.BossProjectile;
+import entities.BrambleBarrier;
 import entities.Collectible;
 import entities.CorruptionZone;
 import entities.DialogInteractable;
@@ -12,6 +13,7 @@ import entities.Gate;
 import entities.Interactable;
 import entities.LevelExit;
 import entities.Lever;
+import entities.LightBeacon;
 import entities.MagicProjectile;
 import entities.ManaPickup;
 import entities.MemoryKey;
@@ -32,6 +34,8 @@ import physics.PhysicsWorld;
 
 import javax.swing.JPanel;
 import java.awt.Color;
+import java.awt.AlphaComposite;
+import java.awt.Composite;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.FontMetrics;
@@ -41,6 +45,7 @@ import java.awt.Graphics2D;
 import java.awt.RadialGradientPaint;
 import java.awt.RenderingHints;
 import java.awt.geom.Point2D;
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -97,7 +102,7 @@ public final class GamePanel extends JPanel {
             "........................................",
             "........................................",
             "........................................",
-            "..P.C..M..H.E.......V....O..E..C...X....",
+            "..P.C..M..H.E..A....V....O..E..YC...X....",
             "########################################"
     };
     private static final String[] LEVEL_3 = {
@@ -132,9 +137,9 @@ public final class GamePanel extends JPanel {
             "............V...C.......................",
             "..........####..........................",
             "........................................",
-            "......V....O............................",
+            "......V....O..A.........................",
             "........................................",
-            "..P.H..E..C..............................",
+            "..P.H..E..C....Y.........................",
             "########################################"
     };
     private static final String[] LEVEL_5 = {
@@ -192,6 +197,8 @@ public final class GamePanel extends JPanel {
     private List<ForestWatcher> forestWatchers = List.of();
     private List<PotionPickup> potionPickups = List.of();
     private List<Collectible> collectibles = List.of();
+    private List<LightBeacon> lightBeacons = List.of();
+    private List<BrambleBarrier> brambleBarriers = List.of();
     private final List<BossProjectile> bossProjectiles = new ArrayList<>();
     private final List<CorruptionZone> corruptionZones = new ArrayList<>();
     private final EnumSet<RuneSymbol.Rune> observedRunes = EnumSet.noneOf(RuneSymbol.Rune.class);
@@ -215,12 +222,41 @@ public final class GamePanel extends JPanel {
     private CollapsePhase collapsePhase;
     private double collapseElapsedSeconds;
     private double endingElapsedSeconds;
+    public static final int MENU_TAB_PLAY = 0;
+    public static final int MENU_TAB_OPTIONS = 1;
+
+    private final WindowController windowController;
+    private int activeMenuTab = MENU_TAB_PLAY;
+    private int optionsMenuSelection = 0;
+    private boolean wasCancelPressed;
+    private boolean wasTabPressed;
+    private boolean wasFullScreenTogglePressed;
+    private boolean wasMousePressed;
     private boolean letterUnlocked;
     private boolean replayingLetter;
     private int mainMenuSelection;
+    private int hitstopFrames;
+    private BufferedImage darknessMask;
 
     public GamePanel(InputManager inputManager) {
+        this(inputManager, null);
+    }
+
+    public GamePanel(InputManager inputManager, WindowController windowController) {
         this.inputManager = inputManager;
+        this.windowController = windowController != null ? windowController : new WindowController() {
+            private boolean fs;
+
+            @Override
+            public boolean isFullScreen() {
+                return fs;
+            }
+
+            @Override
+            public void setFullScreen(boolean fullScreen) {
+                this.fs = fullScreen;
+            }
+        };
         this.player = new Player(
                 0.0,
                 0.0,
@@ -240,6 +276,38 @@ public final class GamePanel extends JPanel {
         addMouseMotionListener(inputManager);
     }
 
+    public WindowController getWindowController() {
+        return windowController;
+    }
+
+    public AudioManager getAudioManager() {
+        return audioManager;
+    }
+
+    public int getActiveMenuTab() {
+        return activeMenuTab;
+    }
+
+    public void setActiveMenuTab(int tab) {
+        this.activeMenuTab = tab;
+    }
+
+    public int getOptionsMenuSelection() {
+        return optionsMenuSelection;
+    }
+
+    public void setOptionsMenuSelection(int selection) {
+        this.optionsMenuSelection = selection;
+    }
+
+    public int getPlayMenuSelection() {
+        return mainMenuSelection;
+    }
+
+    public void setPlayMenuSelection(int selection) {
+        this.mainMenuSelection = selection;
+    }
+
     public void start() {
         gameLoop.start();
     }
@@ -252,6 +320,10 @@ public final class GamePanel extends JPanel {
     public void fixedUpdate(double deltaSeconds) {
         synchronized (worldLock) {
             InputFrame inputFrame = pollInputFrame();
+
+            if (inputFrame.fullScreenToggleJustPressed()) {
+                windowController.toggleFullScreen();
+            }
 
             switch (gameState) {
                 case MAIN_MENU -> updateMainMenu(inputFrame);
@@ -266,6 +338,17 @@ public final class GamePanel extends JPanel {
         }
     }
 
+    public boolean consumeHitstopFrame() {
+        synchronized (worldLock) {
+            if (hitstopFrames == 0) {
+                return false;
+            }
+
+            hitstopFrames--;
+            return true;
+        }
+    }
+
     public GameState getGameState() {
         return gameState;
     }
@@ -275,13 +358,73 @@ public final class GamePanel extends JPanel {
         repaint();
     }
 
+    public double getRenderScale() {
+        int w = getWidth();
+        int h = getHeight();
+        if (w <= 0 || h <= 0) {
+            return 1.0;
+        }
+        return Math.min((double) w / PANEL_WIDTH, (double) h / PANEL_HEIGHT);
+    }
+
+    public int getRenderOffsetX() {
+        int w = getWidth();
+        double scale = getRenderScale();
+        return (int) Math.round((w - PANEL_WIDTH * scale) / 2.0);
+    }
+
+    public int getRenderOffsetY() {
+        int h = getHeight();
+        double scale = getRenderScale();
+        return (int) Math.round((h - PANEL_HEIGHT * scale) / 2.0);
+    }
+
+    public int screenToGameX(int screenX) {
+        double scale = getRenderScale();
+        if (scale <= 0.0) {
+            return screenX;
+        }
+        return (int) Math.round((screenX - getRenderOffsetX()) / scale);
+    }
+
+    public int screenToGameY(int screenY) {
+        double scale = getRenderScale();
+        if (scale <= 0.0) {
+            return screenY;
+        }
+        return (int) Math.round((screenY - getRenderOffsetY()) / scale);
+    }
+
+    public int getVirtualMouseX() {
+        return screenToGameX(inputManager.getMouseX());
+    }
+
+    public int getVirtualMouseY() {
+        return screenToGameY(inputManager.getMouseY());
+    }
+
     @Override
     protected void paintComponent(Graphics graphics) {
         super.paintComponent(graphics);
 
         Graphics2D g2d = (Graphics2D) graphics.create();
         try {
+            int panelW = getWidth();
+            int panelH = getHeight();
+
+            g2d.setColor(Color.BLACK);
+            g2d.fillRect(0, 0, panelW, panelH);
+
+            double scale = getRenderScale();
+            int offsetX = getRenderOffsetX();
+            int offsetY = getRenderOffsetY();
+
+            g2d.translate(offsetX, offsetY);
+            g2d.scale(scale, scale);
+            g2d.setClip(0, 0, PANEL_WIDTH, PANEL_HEIGHT);
+
             g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
             renderScene(g2d);
         } finally {
             g2d.dispose();
@@ -322,10 +465,12 @@ public final class GamePanel extends JPanel {
                 drawPlatforms(worldGraphics);
                 drawLevelExits(worldGraphics);
                 drawGates(worldGraphics);
+                drawBrambleBarriers(worldGraphics);
                 drawSpikes(worldGraphics);
                 drawManaPickups(worldGraphics);
                 drawPotionPickups(worldGraphics);
                 drawCollectibles(worldGraphics);
+                drawLightBeacons(worldGraphics);
                 drawMemoryKeys(worldGraphics);
                 drawForestWatchers(worldGraphics);
                 drawCorruptionZones(worldGraphics);
@@ -372,34 +517,195 @@ public final class GamePanel extends JPanel {
         int edgeAlpha = Math.round(
                 MIN_DARKNESS_ALPHA + (MAX_DARKNESS_ALPHA - MIN_DARKNESS_ALPHA) * levelProgress
         );
-        float screenX = (float) (
-                player.getRenderX(interpolationAlpha) + player.getWidth() * 0.5 - camera.getX()
-        );
-        float screenY = (float) (
-                player.getRenderY(interpolationAlpha) + player.getHeight() * 0.5 - camera.getY()
-        );
+        ensureDarknessMask();
 
-        RadialGradientPaint darkness = new RadialGradientPaint(
-                new Point2D.Float(screenX, screenY),
-                PLAYER_LIGHT_RADIUS,
-                new float[] {0.0f, 0.42f, 1.0f},
+        Graphics2D maskGraphics = darknessMask.createGraphics();
+        Composite previousComposite = maskGraphics.getComposite();
+        try {
+            maskGraphics.setComposite(AlphaComposite.Src);
+            maskGraphics.setColor(new Color(0, 0, 0, edgeAlpha));
+            maskGraphics.fillRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT);
+
+            maskGraphics.setComposite(AlphaComposite.DstOut);
+            carveLight(
+                    maskGraphics,
+                    player.getRenderX(interpolationAlpha) + player.getWidth() * 0.5 - camera.getX(),
+                    player.getRenderY(interpolationAlpha) + player.getHeight() * 0.5 - camera.getY(),
+                    PLAYER_LIGHT_RADIUS
+            );
+
+            for (MagicProjectile magicProjectile : magicProjectiles) {
+                carveLight(
+                        maskGraphics,
+                        magicProjectile.getCenterX() - camera.getX(),
+                        magicProjectile.getCenterY() - camera.getY(),
+                        128.0f
+                );
+            }
+
+            for (LightBeacon lightBeacon : lightBeacons) {
+                if (!lightBeacon.isLit()) {
+                    continue;
+                }
+
+                carveLight(
+                        maskGraphics,
+                        lightBeacon.getLightX() - camera.getX(),
+                        lightBeacon.getLightY() - camera.getY(),
+                        lightBeacon.getLightRadius()
+                );
+            }
+        } finally {
+            maskGraphics.setComposite(previousComposite);
+            maskGraphics.dispose();
+        }
+
+        g2d.drawImage(darknessMask, 0, 0, null);
+    }
+
+    private void ensureDarknessMask() {
+        if (darknessMask != null
+                && darknessMask.getWidth() == PANEL_WIDTH
+                && darknessMask.getHeight() == PANEL_HEIGHT) {
+            return;
+        }
+
+        darknessMask = new BufferedImage(PANEL_WIDTH, PANEL_HEIGHT, BufferedImage.TYPE_INT_ARGB);
+    }
+
+    private void carveLight(Graphics2D g2d, double screenX, double screenY, float radius) {
+        if (screenX + radius < 0.0 || screenX - radius > PANEL_WIDTH
+                || screenY + radius < 0.0 || screenY - radius > PANEL_HEIGHT) {
+            return;
+        }
+
+        RadialGradientPaint lightGradient = new RadialGradientPaint(
+                new Point2D.Float((float) screenX, (float) screenY),
+                radius,
+                new float[] {0.0f, 0.38f, 1.0f},
                 new Color[] {
-                        new Color(0, 0, 0, 0),
-                        new Color(0, 0, 0, edgeAlpha / 3),
-                        new Color(0, 0, 0, edgeAlpha)
+                        new Color(255, 255, 255, 255),
+                        new Color(255, 255, 255, 176),
+                        new Color(255, 255, 255, 0)
                 }
         );
-        g2d.setPaint(darkness);
-        g2d.fillRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT);
+        g2d.setPaint(lightGradient);
+        int diameter = Math.round(radius * 2.0f);
+        g2d.fillOval(
+                (int) Math.round(screenX - radius),
+                (int) Math.round(screenY - radius),
+                diameter,
+                diameter
+        );
     }
 
     private void drawMainMenu(Graphics2D g2d) {
-        drawCenteredText(g2d, "O Caminho para o Amanhecer", PANEL_HEIGHT / 2 - 86, 38, new Color(246, 226, 174));
-        drawMenuOption(g2d, "Iniciar jornada", PANEL_HEIGHT / 2 - 20, mainMenuSelection == 0);
-        if (letterUnlocked) {
-            drawMenuOption(g2d, "Rever a carta", PANEL_HEIGHT / 2 + 24, mainMenuSelection == 1);
+        drawCenteredText(g2d, "O Caminho para o Amanhecer", PANEL_HEIGHT / 2 - 135, 38, new Color(246, 226, 174));
+
+        drawTabsHeader(g2d);
+
+        int cardX = PANEL_WIDTH / 2 - 270;
+        int cardY = PANEL_HEIGHT / 2 - 40;
+        int cardW = 540;
+        int cardH = 210;
+
+        g2d.setColor(new Color(15, 20, 36, 190));
+        g2d.fillRoundRect(cardX, cardY, cardW, cardH, 16, 16);
+        g2d.setColor(new Color(90, 115, 160, 140));
+        g2d.drawRoundRect(cardX, cardY, cardW, cardH, 16, 16);
+
+        if (activeMenuTab == MENU_TAB_PLAY) {
+            drawPlayTab(g2d);
+        } else {
+            drawOptionsTab(g2d);
         }
-        drawCenteredText(g2d, "Setas para escolher - Enter para confirmar", PANEL_HEIGHT / 2 + 86, 16, new Color(222, 232, 249));
+    }
+
+    private void drawTabsHeader(Graphics2D g2d) {
+        int tabY = PANEL_HEIGHT / 2 - 95;
+        int tabW = 160;
+        int tabH = 40;
+        int tab1X = PANEL_WIDTH / 2 - 170;
+        int tab2X = PANEL_WIDTH / 2 + 10;
+
+        drawTabButton(g2d, "Jogar", tab1X, tabY, tabW, tabH, activeMenuTab == MENU_TAB_PLAY);
+        drawTabButton(g2d, "Opções", tab2X, tabY, tabW, tabH, activeMenuTab == MENU_TAB_OPTIONS);
+    }
+
+    private void drawTabButton(Graphics2D g2d, String title, int x, int y, int w, int h, boolean active) {
+        if (active) {
+            g2d.setColor(new Color(246, 226, 174, 55));
+            g2d.fillRoundRect(x, y, w, h, 12, 12);
+            g2d.setColor(new Color(246, 226, 174));
+            g2d.drawRoundRect(x, y, w, h, 12, 12);
+            g2d.fillRect(x + 20, y + h - 3, w - 40, 3);
+            drawCenteredText(g2d, title, y + 27, 20, new Color(255, 238, 185));
+        } else {
+            g2d.setColor(new Color(20, 26, 45, 140));
+            g2d.fillRoundRect(x, y, w, h, 12, 12);
+            g2d.setColor(new Color(110, 130, 170, 120));
+            g2d.drawRoundRect(x, y, w, h, 12, 12);
+            drawCenteredText(g2d, title, y + 26, 18, new Color(170, 185, 215));
+        }
+    }
+
+    private void drawPlayTab(Graphics2D g2d) {
+        drawMenuOption(g2d, "Iniciar jornada", PANEL_HEIGHT / 2 + 15, mainMenuSelection == 0);
+        if (letterUnlocked) {
+            drawMenuOption(g2d, "Rever a carta", PANEL_HEIGHT / 2 + 70, mainMenuSelection == 1);
+        }
+        drawCenteredText(
+                g2d,
+                "Setas Cima/Baixo para navegar - Enter para confirmar - Direita ou Tab para Opções",
+                PANEL_HEIGHT / 2 + 200,
+                15,
+                new Color(210, 224, 245)
+        );
+    }
+
+    private void drawOptionsTab(Graphics2D g2d) {
+        boolean volumeSelected = optionsMenuSelection == 0;
+        boolean fullScreenSelected = optionsMenuSelection == 1;
+        boolean backSelected = optionsMenuSelection == 2;
+
+        int volumeY = PANEL_HEIGHT / 2 - 8;
+        String volumeLabel = (volumeSelected ? "> " : "  ") + "Volume do Jogo:  <  " + audioManager.getVolumePercentage() + "%  >";
+        drawCenteredText(g2d, volumeLabel, volumeY, 19, volumeSelected ? new Color(255, 230, 164) : new Color(190, 204, 227));
+
+        int barW = 280;
+        int barH = 14;
+        int barX = PANEL_WIDTH / 2 - barW / 2;
+        int barY = volumeY + 12;
+
+        g2d.setColor(new Color(25, 32, 50));
+        g2d.fillRoundRect(barX, barY, barW, barH, 8, 8);
+        int fillW = (int) Math.round(barW * audioManager.getVolume());
+        if (fillW > 0) {
+            g2d.setColor(volumeSelected ? new Color(246, 226, 174) : new Color(160, 195, 240));
+            g2d.fillRoundRect(barX, barY, fillW, barH, 8, 8);
+        }
+        g2d.setColor(new Color(110, 130, 170, 160));
+        g2d.drawRoundRect(barX, barY, barW, barH, 8, 8);
+
+        g2d.setColor(volumeSelected ? new Color(255, 230, 164) : new Color(170, 185, 215));
+        g2d.drawString("<", barX - 22, barY + 12);
+        g2d.drawString(">", barX + barW + 12, barY + 12);
+
+        int fsY = PANEL_HEIGHT / 2 + 62;
+        String fsStatus = windowController.isFullScreen() ? "Ativado" : "Desativado";
+        String fsLabel = (fullScreenSelected ? "> " : "  ") + "Tela Cheia:  <  " + fsStatus + "  >";
+        drawCenteredText(g2d, fsLabel, fsY, 19, fullScreenSelected ? new Color(255, 230, 164) : new Color(190, 204, 227));
+
+        int backY = PANEL_HEIGHT / 2 + 115;
+        drawCenteredText(g2d, (backSelected ? "> " : "  ") + "Voltar para a aba Jogar", backY, 19, backSelected ? new Color(255, 230, 164) : new Color(190, 204, 227));
+
+        drawCenteredText(
+                g2d,
+                "Setas Esquerda/Direita para ajustar - Enter para alternar - Esc ou Voltar para a aba Jogar",
+                PANEL_HEIGHT / 2 + 200,
+                15,
+                new Color(210, 224, 245)
+        );
     }
 
     private void drawGameOver(Graphics2D g2d) {
@@ -639,6 +945,12 @@ public final class GamePanel extends JPanel {
         }
     }
 
+    private void drawBrambleBarriers(Graphics2D g2d) {
+        for (BrambleBarrier brambleBarrier : brambleBarriers) {
+            brambleBarrier.render(g2d);
+        }
+    }
+
     private void drawSpikes(Graphics2D g2d) {
         for (Spike spike : spikes) {
             spike.render(g2d);
@@ -660,6 +972,12 @@ public final class GamePanel extends JPanel {
     private void drawCollectibles(Graphics2D g2d) {
         for (Collectible collectible : collectibles) {
             collectible.render(g2d);
+        }
+    }
+
+    private void drawLightBeacons(Graphics2D g2d) {
+        for (LightBeacon lightBeacon : lightBeacons) {
+            lightBeacon.render(g2d);
         }
     }
 
@@ -815,9 +1133,11 @@ public final class GamePanel extends JPanel {
         forestWatchers = level.getForestWatchers();
         potionPickups = level.getPotionPickups();
         collectibles = level.getCollectibles();
+        lightBeacons = level.getLightBeacons();
+        brambleBarriers = level.getBrambleBarriers();
         restoreCollectedWorldItems();
 
-        physicsWorld = new PhysicsWorld(worldWidth, worldHeight, platforms, gates);
+        physicsWorld = new PhysicsWorld(worldWidth, worldHeight, platforms, gates, brambleBarriers);
         magicProjectiles.clear();
         bossProjectiles.clear();
         corruptionZones.clear();
@@ -829,6 +1149,7 @@ public final class GamePanel extends JPanel {
         forestReactionRemainingSeconds = 0.0;
         collapsePhase = null;
         collapseElapsedSeconds = 0.0;
+        hitstopFrames = 0;
         player.respawn(level.getPlayerStartX(), level.getPlayerStartY());
         physicsWorld.resolve(player);
         player.refreshState();
@@ -869,27 +1190,144 @@ public final class GamePanel extends JPanel {
     }
 
     private void updateMainMenu(InputFrame inputFrame) {
-        int optionCount = letterUnlocked ? 2 : 1;
-        if (inputFrame.movingUpJustPressed()) {
-            mainMenuSelection = Math.floorMod(mainMenuSelection - 1, optionCount);
-        } else if (inputFrame.movingDownJustPressed()) {
-            mainMenuSelection = Math.floorMod(mainMenuSelection + 1, optionCount);
-        }
-
-        if (!inputFrame.confirmJustPressed()) {
+        if (inputFrame.tabJustPressed()) {
+            activeMenuTab = (activeMenuTab == MENU_TAB_PLAY) ? MENU_TAB_OPTIONS : MENU_TAB_PLAY;
             return;
         }
 
-        if (mainMenuSelection == 0) {
-            replayingLetter = false;
-            beginNewJourney();
-            gameState = GameState.PLAYING;
-            return;
+        // Mouse click handling
+        if (inputFrame.mouseJustPressed()) {
+            int mx = getVirtualMouseX();
+            int my = getVirtualMouseY();
+
+            // Tab 0 (Jogar) header: [470, 260, 160, 44]
+            if (mx >= 470 && mx <= 630 && my >= 250 && my <= 305) {
+                activeMenuTab = MENU_TAB_PLAY;
+                return;
+            }
+            // Tab 1 (Opções) header: [650, 260, 160, 44]
+            if (mx >= 650 && mx <= 810 && my >= 250 && my <= 305) {
+                activeMenuTab = MENU_TAB_OPTIONS;
+                return;
+            }
+
+            if (activeMenuTab == MENU_TAB_PLAY) {
+                // Iniciar jornada: [420, 350, 440, 45]
+                if (mx >= 420 && mx <= 860 && my >= 350 && my <= 395) {
+                    mainMenuSelection = 0;
+                    replayingLetter = false;
+                    beginNewJourney();
+                    gameState = GameState.PLAYING;
+                    return;
+                }
+                // Rever a carta: [420, 405, 440, 45]
+                if (letterUnlocked && mx >= 420 && mx <= 860 && my >= 405 && my <= 450) {
+                    mainMenuSelection = 1;
+                    replayingLetter = true;
+                    endingElapsedSeconds = 0.0;
+                    gameState = GameState.ENDING;
+                    return;
+                }
+            } else {
+                // Volume row: [420, 335, 440, 55]
+                if (my >= 335 && my <= 395) {
+                    optionsMenuSelection = 0;
+                    // Volume decrease button: [465, 345, 35, 40]
+                    if (mx >= 465 && mx <= 505) {
+                        audioManager.decreaseVolume(0.05f);
+                    }
+                    // Volume increase button: [775, 345, 35, 40]
+                    else if (mx >= 775 && mx <= 815) {
+                        audioManager.increaseVolume(0.05f);
+                    }
+                    // Volume slider bar: [500, 350, 280, 30]
+                    else if (mx >= 500 && mx <= 780) {
+                        float newVol = (float) (mx - 500) / 280.0f;
+                        audioManager.setVolume(newVol);
+                    }
+                    return;
+                }
+                // Tela cheia row: [420, 400, 440, 45]
+                if (mx >= 420 && mx <= 860 && my >= 400 && my <= 445) {
+                    optionsMenuSelection = 1;
+                    windowController.toggleFullScreen();
+                    return;
+                }
+                // Voltar row: [420, 455, 440, 45]
+                if (mx >= 420 && mx <= 860 && my >= 455 && my <= 500) {
+                    activeMenuTab = MENU_TAB_PLAY;
+                    return;
+                }
+            }
         }
 
-        replayingLetter = true;
-        endingElapsedSeconds = 0.0;
-        gameState = GameState.ENDING;
+        // Cancel / Escape key
+        if (inputFrame.cancelJustPressed()) {
+            if (activeMenuTab == MENU_TAB_OPTIONS) {
+                activeMenuTab = MENU_TAB_PLAY;
+                return;
+            }
+        }
+
+        // Keyboard navigation
+        if (activeMenuTab == MENU_TAB_PLAY) {
+            int optionCount = letterUnlocked ? 2 : 1;
+            if (inputFrame.movingUpJustPressed()) {
+                mainMenuSelection = Math.floorMod(mainMenuSelection - 1, optionCount);
+            } else if (inputFrame.movingDownJustPressed()) {
+                mainMenuSelection = Math.floorMod(mainMenuSelection + 1, optionCount);
+            } else if (inputFrame.movingRightJustPressed()) {
+                activeMenuTab = MENU_TAB_OPTIONS;
+                return;
+            }
+
+            if (!inputFrame.confirmJustPressed()) {
+                return;
+            }
+
+            if (mainMenuSelection == 0) {
+                replayingLetter = false;
+                beginNewJourney();
+                gameState = GameState.PLAYING;
+                return;
+            }
+
+            replayingLetter = true;
+            endingElapsedSeconds = 0.0;
+            gameState = GameState.ENDING;
+        } else {
+            // Options tab
+            if (inputFrame.movingUpJustPressed()) {
+                optionsMenuSelection = Math.floorMod(optionsMenuSelection - 1, 3);
+            } else if (inputFrame.movingDownJustPressed()) {
+                optionsMenuSelection = Math.floorMod(optionsMenuSelection + 1, 3);
+            }
+
+            if (optionsMenuSelection == 0) { // Volume
+                if (inputFrame.movingLeftJustPressed()) {
+                    audioManager.decreaseVolume(0.05f);
+                } else if (inputFrame.movingRightJustPressed()) {
+                    audioManager.increaseVolume(0.05f);
+                } else if (inputFrame.confirmJustPressed()) {
+                    if (audioManager.getVolume() >= 0.99f) {
+                        audioManager.setVolume(0.0f);
+                    } else {
+                        audioManager.increaseVolume(0.10f);
+                    }
+                }
+            } else if (optionsMenuSelection == 1) { // Tela Cheia
+                if (inputFrame.confirmJustPressed()
+                        || inputFrame.movingLeftJustPressed()
+                        || inputFrame.movingRightJustPressed()) {
+                    windowController.toggleFullScreen();
+                }
+            } else if (optionsMenuSelection == 2) { // Voltar
+                if (inputFrame.confirmJustPressed()
+                        || inputFrame.movingLeftJustPressed()) {
+                    activeMenuTab = MENU_TAB_PLAY;
+                }
+            }
+        }
     }
 
     private void updateGameplay(double deltaSeconds) {
@@ -951,8 +1389,8 @@ public final class GamePanel extends JPanel {
         }
 
         player.updateAttackAim(
-                inputManager.getMouseX() + camera.getX(),
-                inputManager.getMouseY() + camera.getY()
+                getVirtualMouseX() + camera.getX(),
+                getVirtualMouseY() + camera.getY()
         );
     }
 
@@ -975,6 +1413,8 @@ public final class GamePanel extends JPanel {
 
         replayingLetter = false;
         mainMenuSelection = 0;
+        activeMenuTab = MENU_TAB_PLAY;
+        optionsMenuSelection = 0;
         loadLevel(0);
         gameState = GameState.MAIN_MENU;
     }
@@ -1077,6 +1517,11 @@ public final class GamePanel extends JPanel {
                 continue;
             }
 
+            if (handleMagicEnvironmentImpact(projectile)) {
+                iterator.remove();
+                continue;
+            }
+
             for (Enemy enemy : enemies) {
                 if (enemy.isDead() || !projectile.getBounds().intersects(enemy.getBounds())) {
                     continue;
@@ -1091,6 +1536,49 @@ public final class GamePanel extends JPanel {
                 iterator.remove();
             }
         }
+    }
+
+    private boolean handleMagicEnvironmentImpact(MagicProjectile projectile) {
+        for (LightBeacon lightBeacon : lightBeacons) {
+            if (!projectile.getBounds().intersects(lightBeacon.getBounds()) || !lightBeacon.ignite()) {
+                continue;
+            }
+
+            projectile.deactivate();
+            spawnEnvironmentParticles(
+                    lightBeacon.getLightX(),
+                    lightBeacon.getLightY(),
+                    new Color(255, 222, 119),
+                    18
+            );
+            audioManager.playEvent(AudioManager.SoundEffect.AURORA);
+            camera.shake(4.0, 0.08);
+            requestHitstop(2);
+            return true;
+        }
+
+        for (BrambleBarrier brambleBarrier : brambleBarriers) {
+            if (brambleBarrier.isBurned() || !projectile.getBounds().intersects(brambleBarrier.getBounds())) {
+                continue;
+            }
+            if (!brambleBarrier.burn()) {
+                continue;
+            }
+
+            projectile.deactivate();
+            spawnEnvironmentParticles(
+                    brambleBarrier.getCenterX(),
+                    brambleBarrier.getCenterY(),
+                    new Color(132, 166, 92),
+                    22
+            );
+            audioManager.playEvent(AudioManager.SoundEffect.BRAMBLE);
+            camera.shake(5.0, 0.10);
+            requestHitstop(2);
+            return true;
+        }
+
+        return false;
     }
 
     private void handlePlayerAttacks() {
@@ -1437,12 +1925,21 @@ public final class GamePanel extends JPanel {
         boolean movingUp = inputManager.isMovingUp();
         boolean movingDown = inputManager.isMovingDown();
         boolean confirmPressed = inputManager.isConfirmPressed();
+        boolean cancelPressed = inputManager.isEscapePressed();
+        boolean tabPressed = inputManager.isTabPressed();
+        boolean fullScreenTogglePressed = inputManager.isFullScreenTogglePressed();
+        boolean mousePressed = inputManager.isLeftMousePressed();
+
         InputFrame inputFrame = new InputFrame(
                 movingLeft && !wasMovingLeftPressed,
                 movingRight && !wasMovingRightPressed,
                 movingUp && !wasMovingUpPressed,
                 movingDown && !wasMovingDownPressed,
-                confirmPressed && !wasConfirmPressed
+                confirmPressed && !wasConfirmPressed,
+                cancelPressed && !wasCancelPressed,
+                tabPressed && !wasTabPressed,
+                fullScreenTogglePressed && !wasFullScreenTogglePressed,
+                mousePressed && !wasMousePressed
         );
 
         wasMovingLeftPressed = movingLeft;
@@ -1450,6 +1947,10 @@ public final class GamePanel extends JPanel {
         wasMovingUpPressed = movingUp;
         wasMovingDownPressed = movingDown;
         wasConfirmPressed = confirmPressed;
+        wasCancelPressed = cancelPressed;
+        wasTabPressed = tabPressed;
+        wasFullScreenTogglePressed = fullScreenTogglePressed;
+        wasMousePressed = mousePressed;
         return inputFrame;
     }
 
@@ -1469,6 +1970,7 @@ public final class GamePanel extends JPanel {
         player.takeDamage(amount);
         if (player.getCurrentHealth() < healthBeforeDamage) {
             camera.shake(9.0, 0.16);
+            requestHitstop(2);
             return true;
         }
         return false;
@@ -1482,6 +1984,7 @@ public final class GamePanel extends JPanel {
         }
 
         spawnHitSparks(enemy);
+        requestHitstop(enemy instanceof BossEnemy ? 5 : 3);
         if (enemy instanceof BossEnemy bossEnemy) {
             camera.shake(12.0, 0.22);
             if (bossEnemy.isDead()) {
@@ -1524,11 +2027,34 @@ public final class GamePanel extends JPanel {
         }
     }
 
+    private void spawnEnvironmentParticles(double originX, double originY, Color color, int count) {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        for (int index = 0; index < count; index++) {
+            addParticle(new Particle(
+                    originX,
+                    originY,
+                    random.nextDouble(-165.0, 165.0),
+                    random.nextDouble(-190.0, -30.0),
+                    random.nextDouble(0.26, 0.58),
+                    color,
+                    random.nextInt(3, 7)
+            ));
+        }
+    }
+
     private void addParticle(Particle particle) {
         if (particles.size() == MAX_PARTICLES) {
             particles.remove(0);
         }
         particles.add(particle);
+    }
+
+    private void requestHitstop(int frames) {
+        if (frames <= 0) {
+            throw new IllegalArgumentException("Hitstop frames must be greater than zero.");
+        }
+
+        hitstopFrames = Math.max(hitstopFrames, frames);
     }
 
     private void handleLevelTransition() {
@@ -1677,7 +2203,11 @@ public final class GamePanel extends JPanel {
             boolean movingRightJustPressed,
             boolean movingUpJustPressed,
             boolean movingDownJustPressed,
-            boolean confirmJustPressed
+            boolean confirmJustPressed,
+            boolean cancelJustPressed,
+            boolean tabJustPressed,
+            boolean fullScreenToggleJustPressed,
+            boolean mouseJustPressed
     ) {
     }
 }

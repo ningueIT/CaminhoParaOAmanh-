@@ -55,7 +55,9 @@ public final class GameLoop implements Runnable {
 
             // Processa a lógica em passos fixos para manter física e input estáveis.
             while (accumulator >= FIXED_TIME_STEP && updates < MAX_UPDATES_PER_FRAME) {
-                gamePanel.fixedUpdate(FIXED_TIME_STEP);
+                if (!gamePanel.consumeHitstopFrame()) {
+                    gamePanel.fixedUpdate(FIXED_TIME_STEP);
+                }
                 accumulator -= FIXED_TIME_STEP;
                 updates++;
             }
